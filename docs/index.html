@@ -5,245 +5,302 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Barista - The Menu Bar Platform for macOS</title>
 <meta name="description" content="52 widgets, menu bar styling, script support. The most powerful menu bar app for macOS. Free and open source.">
+<link rel="icon" type="image/png" href="icon.png">
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
 :root{
-  --bg:#09090b;--bg2:#18181b;--bg3:#27272a;
-  --text:#fafafa;--text2:#a1a1aa;--text3:#71717a;
-  --accent:#f97316;--accent2:#fb923c;--accent3:#fdba74;
-  --border:#27272a;
-  --glow:rgba(249,115,22,.15);
+  --bg:#0a0c10;--bg2:#12151c;--bg3:#1a1e28;--bg4:#232836;
+  --text:#f0f0f2;--text2:#9ca3b4;--text3:#5f6678;
+  --amber:#e8922a;--amber2:#f5a623;--amber3:#ffc971;--amber-glow:rgba(232,146,42,.15);
+  --cyan:#2dd4bf;--cyan2:#5eead4;--cyan-glow:rgba(45,212,191,.12);
+  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.1);
 }
-@font-face{font-family:'Inter';src:local('Inter'),local('SF Pro Display');font-weight:100 900}
 body{
-  font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Segoe UI',sans-serif;
   background:var(--bg);color:var(--text);
-  overflow-x:hidden;line-height:1.6;
-  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;line-height:1.6;-webkit-font-smoothing:antialiased;
 }
-a{color:var(--accent);text-decoration:none}
-a:hover{color:var(--accent2)}
+a{color:var(--amber2);text-decoration:none}
+a:hover{color:var(--amber3)}
+code{font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--bg3);padding:2px 6px;border-radius:4px}
 
-/* Grain overlay */
+/* Noise texture */
 body::before{
-  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;
-  opacity:.03;
-  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Gradient meshes */
-.mesh{position:fixed;border-radius:50%;filter:blur(120px);pointer-events:none;z-index:0}
-.mesh-1{width:600px;height:600px;background:radial-gradient(circle,rgba(249,115,22,.12),transparent 70%);top:-200px;right:-100px}
-.mesh-2{width:500px;height:500px;background:radial-gradient(circle,rgba(168,85,247,.08),transparent 70%);bottom:20%;left:-150px}
-.mesh-3{width:400px;height:400px;background:radial-gradient(circle,rgba(249,115,22,.06),transparent 70%);bottom:-100px;right:20%}
+/* Background glows */
+.glow{position:fixed;border-radius:50%;filter:blur(140px);pointer-events:none;z-index:0}
+.glow-1{width:700px;height:700px;background:radial-gradient(circle,rgba(232,146,42,.1),transparent 70%);top:-300px;left:50%;transform:translateX(-50%)}
+.glow-2{width:500px;height:500px;background:radial-gradient(circle,rgba(45,212,191,.06),transparent 70%);bottom:30%;right:-200px}
+.glow-3{width:600px;height:600px;background:radial-gradient(circle,rgba(232,146,42,.05),transparent 70%);bottom:-200px;left:-100px}
 
 .container{max-width:1100px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
 
-/* Nav */
+/* -------- NAV -------- */
 nav{
   position:fixed;top:0;left:0;right:0;z-index:100;
-  backdrop-filter:blur(20px) saturate(1.5);
-  -webkit-backdrop-filter:blur(20px) saturate(1.5);
-  background:rgba(9,9,11,.7);
-  border-bottom:1px solid rgba(255,255,255,.06);
+  backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);
+  background:rgba(10,12,16,.75);border-bottom:1px solid var(--border);
 }
 nav .container{display:flex;align-items:center;justify-content:space-between;height:64px}
 .nav-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:-.02em}
-.nav-brand img{width:32px;height:32px;border-radius:8px}
-.nav-links{display:flex;gap:32px;align-items:center}
+.nav-brand img{width:34px;height:34px;border-radius:9px;box-shadow:0 0 12px rgba(232,146,42,.2)}
+.nav-links{display:flex;gap:28px;align-items:center}
 .nav-links a{color:var(--text2);font-size:14px;font-weight:500;transition:color .2s}
 .nav-links a:hover{color:var(--text)}
 .nav-dl{
-  background:var(--accent);color:#fff;padding:8px 20px;border-radius:10px;
-  font-weight:600;font-size:14px;transition:all .2s;
+  background:linear-gradient(135deg,var(--amber),#d97c0a);color:#fff!important;
+  padding:8px 22px;border-radius:10px;font-weight:600;font-size:14px;transition:all .2s;
+  box-shadow:0 0 16px rgba(232,146,42,.15);
 }
-.nav-dl:hover{background:var(--accent2);color:#fff;transform:translateY(-1px);box-shadow:0 4px 20px rgba(249,115,22,.3)}
+.nav-dl:hover{transform:translateY(-1px);box-shadow:0 4px 24px rgba(232,146,42,.3);color:#fff!important}
 
-/* Hero */
-.hero{padding:160px 0 100px;text-align:center}
+/* -------- HERO -------- */
+.hero{padding:140px 0 80px;text-align:center}
+.hero-icon{
+  width:140px;height:140px;border-radius:32px;margin:0 auto 40px;
+  box-shadow:
+    0 0 0 1px rgba(232,146,42,.15),
+    0 0 60px rgba(232,146,42,.12),
+    0 0 120px rgba(232,146,42,.06),
+    0 24px 80px rgba(0,0,0,.6);
+  animation:float 6s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
 .hero-badge{
   display:inline-flex;align-items:center;gap:8px;
-  background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.2);
-  padding:6px 16px;border-radius:100px;font-size:13px;color:var(--accent2);
+  background:rgba(232,146,42,.06);border:1px solid rgba(232,146,42,.18);
+  padding:6px 18px;border-radius:100px;font-size:13px;color:var(--amber2);
   margin-bottom:32px;font-weight:500;
 }
-.hero-badge .dot{width:6px;height:6px;background:var(--accent);border-radius:50%;animation:pulse 2s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.hero-badge .dot{width:6px;height:6px;background:var(--amber);border-radius:50%;animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
 .hero h1{
-  font-size:clamp(48px,8vw,80px);font-weight:800;letter-spacing:-.04em;
-  line-height:1.05;margin-bottom:24px;
-  background:linear-gradient(135deg,#fff 0%,#fff 40%,var(--accent3) 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  background-clip:text;
+  font-size:clamp(44px,7.5vw,76px);font-weight:800;letter-spacing:-.045em;
+  line-height:1.05;margin-bottom:20px;
+  background:linear-gradient(135deg,#fff 0%,#f0f0f2 35%,var(--amber3) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
 }
-.hero p{font-size:20px;color:var(--text2);max-width:560px;margin:0 auto 48px;line-height:1.7;font-weight:400}
-.hero-actions{display:flex;gap:16px;justify-content:center;align-items:center;flex-wrap:wrap}
-.btn-primary{
-  display:inline-flex;align-items:center;gap:10px;
-  background:linear-gradient(135deg,var(--accent),#ea580c);
-  color:#fff;padding:16px 36px;border-radius:14px;
-  font-weight:700;font-size:17px;transition:all .25s;
-  border:none;cursor:pointer;
-  box-shadow:0 0 0 1px rgba(249,115,22,.3),0 4px 24px rgba(249,115,22,.2);
-}
-.btn-primary:hover{
-  transform:translateY(-2px);color:#fff;
-  box-shadow:0 0 0 1px rgba(249,115,22,.5),0 8px 40px rgba(249,115,22,.35);
-}
-.btn-primary svg{width:20px;height:20px}
-.btn-secondary{
-  display:inline-flex;align-items:center;gap:8px;
-  background:var(--bg2);border:1px solid var(--border);
-  color:var(--text2);padding:16px 32px;border-radius:14px;
-  font-weight:600;font-size:16px;transition:all .25s;
-}
-.btn-secondary:hover{border-color:var(--text3);color:var(--text);transform:translateY(-2px)}
-.btn-secondary svg{width:18px;height:18px}
-.hero-meta{margin-top:24px;font-size:13px;color:var(--text3);display:flex;gap:24px;justify-content:center}
-.hero-meta span{display:flex;align-items:center;gap:6px}
+.hero p{font-size:19px;color:var(--text2);max-width:540px;margin:0 auto 44px;line-height:1.75}
+.hero p strong{color:var(--text);font-weight:600}
+.hero-actions{display:flex;gap:14px;justify-content:center;align-items:center;flex-wrap:wrap}
 
-/* Floating menu bar mockup */
-.menubar-demo{
-  margin:80px auto 0;max-width:800px;
-  background:linear-gradient(180deg,rgba(24,24,27,.9),rgba(24,24,27,.6));
-  border:1px solid rgba(255,255,255,.08);
-  border-radius:14px;padding:12px 20px;
-  display:flex;align-items:center;justify-content:space-between;
-  backdrop-filter:blur(10px);
-  box-shadow:0 24px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.03);
-  overflow:hidden;position:relative;
+/* Download button - the star */
+.btn-download{
+  display:inline-flex;align-items:center;gap:12px;
+  background:linear-gradient(135deg,var(--amber),#c77a0a);
+  color:#fff;padding:18px 40px;border-radius:16px;
+  font-weight:700;font-size:17px;transition:all .25s;
+  border:none;cursor:pointer;position:relative;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(232,146,42,.4),0 6px 30px rgba(232,146,42,.25);
 }
-.menubar-demo::before{
+.btn-download::before{
   content:'';position:absolute;inset:0;
-  background:linear-gradient(90deg,rgba(249,115,22,.04),transparent 30%,transparent 70%,rgba(168,85,247,.04));
+  background:linear-gradient(135deg,rgba(255,255,255,.15),transparent 60%);
   pointer-events:none;
 }
-.mb-widgets{display:flex;gap:16px;align-items:center;font-size:13px;font-weight:500;font-family:'SF Mono',SFMono-Regular,Menlo,monospace}
-.mb-w{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;transition:background .2s}
-.mb-w:hover{background:rgba(255,255,255,.06)}
-.mb-green{color:#4ade80}.mb-red{color:#f87171}.mb-blue{color:#60a5fa}.mb-orange{color:var(--accent2)}.mb-purple{color:#c084fc}.mb-white{color:var(--text2)}
-.mb-ticker{
-  display:flex;gap:14px;font-size:12px;font-family:'SF Mono',SFMono-Regular,Menlo,monospace;
-  animation:scroll 20s linear infinite;
+.btn-download:hover{
+  transform:translateY(-2px);color:#fff;
+  box-shadow:0 0 0 1px rgba(232,146,42,.6),0 10px 50px rgba(232,146,42,.35);
 }
-@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-.mb-time{color:var(--text2);font-size:13px;font-weight:500}
+.btn-download svg{width:20px;height:20px}
+.btn-download .size{font-weight:400;opacity:.7;font-size:14px}
 
-/* Sections */
+.btn-gh{
+  display:inline-flex;align-items:center;gap:10px;
+  background:var(--bg2);border:1px solid var(--border2);
+  color:var(--text2);padding:18px 32px;border-radius:16px;
+  font-weight:600;font-size:16px;transition:all .25s;
+}
+.btn-gh:hover{border-color:var(--text3);color:var(--text);transform:translateY(-2px)}
+.btn-gh svg{width:18px;height:18px}
+
+.hero-sub{margin-top:20px;font-size:13px;color:var(--text3);display:flex;gap:20px;justify-content:center;flex-wrap:wrap}
+.hero-sub span{display:flex;align-items:center;gap:5px}
+.hero-sub svg{opacity:.6}
+
+/* -------- MENU BAR DEMO -------- */
+.menubar-wrap{margin:72px auto 0;max-width:840px;position:relative}
+.menubar-glow{
+  position:absolute;inset:-20px -40px;
+  background:radial-gradient(ellipse at center,rgba(232,146,42,.06),transparent 70%);
+  filter:blur(30px);pointer-events:none;
+}
+.menubar{
+  position:relative;
+  background:linear-gradient(180deg,rgba(18,21,28,.95),rgba(18,21,28,.7));
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:12px;padding:10px 20px;
+  display:flex;align-items:center;justify-content:space-between;
+  backdrop-filter:blur(10px);
+  box-shadow:0 20px 60px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04);
+}
+.mb-left{display:flex;align-items:center;gap:8px}
+.mb-logo{width:18px;height:18px;border-radius:4px;opacity:.8}
+.mb-apple{color:var(--text2);font-size:15px;margin-right:4px}
+.mb-app{color:var(--text2);font-size:13px;font-weight:600}
+.mb-right{display:flex;gap:14px;align-items:center;font-size:12px;font-weight:500;font-family:'SF Mono',SFMono-Regular,Menlo,monospace}
+.mb-w{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;transition:background .2s}
+.mb-w:hover{background:rgba(255,255,255,.05)}
+.mb-g{color:#4ade80}.mb-r{color:#f87171}.mb-c{color:var(--cyan)}.mb-a{color:var(--amber2)}.mb-m{color:var(--text2)}
+.mb-time{color:var(--text2);font-size:13px;font-weight:500;font-family:inherit}
+
+/* -------- STATS -------- */
+.stats{
+  display:flex;gap:0;justify-content:center;padding:80px 0;
+  border-bottom:1px solid var(--border);margin:0 auto;max-width:800px;
+}
+.stat{flex:1;text-align:center;position:relative}
+.stat+.stat::before{content:'';position:absolute;left:0;top:20%;height:60%;width:1px;background:var(--border2)}
+.stat-num{
+  font-size:52px;font-weight:800;letter-spacing:-.04em;
+  background:linear-gradient(135deg,var(--amber),var(--amber3));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.stat-label{font-size:13px;color:var(--text3);margin-top:4px;font-weight:500}
+
+/* -------- SECTIONS -------- */
 section{padding:100px 0}
-.section-label{
-  display:inline-flex;align-items:center;gap:8px;
-  font-size:13px;font-weight:600;color:var(--accent);
-  text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px;
+.section-tag{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:12px;font-weight:700;color:var(--amber);
+  text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;
 }
-.section-title{font-size:clamp(32px,5vw,48px);font-weight:800;letter-spacing:-.03em;line-height:1.15;margin-bottom:16px}
-.section-desc{font-size:18px;color:var(--text2);max-width:560px;line-height:1.7}
+.section-tag .bar{width:20px;height:2px;background:var(--amber);border-radius:2px}
+.section-title{font-size:clamp(30px,4.5vw,46px);font-weight:800;letter-spacing:-.035em;line-height:1.12;margin-bottom:14px}
+.section-desc{font-size:17px;color:var(--text2);max-width:520px;line-height:1.7}
 
-/* Feature grid */
-.features{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:64px}
+/* -------- FEATURES -------- */
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px}
 .feat{
   background:var(--bg2);border:1px solid var(--border);border-radius:16px;
-  padding:32px;transition:all .3s;position:relative;overflow:hidden;
+  padding:28px;transition:all .35s;position:relative;overflow:hidden;
 }
-.feat:hover{border-color:rgba(249,115,22,.2);transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,.3)}
-.feat::after{
+.feat:hover{border-color:rgba(232,146,42,.2);transform:translateY(-3px);box-shadow:0 16px 48px rgba(0,0,0,.3)}
+.feat::before{
   content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(249,115,22,.3),transparent);
-  opacity:0;transition:opacity .3s;
+  background:linear-gradient(90deg,transparent,rgba(232,146,42,.25),transparent);
+  opacity:0;transition:opacity .35s;
 }
-.feat:hover::after{opacity:1}
+.feat:hover::before{opacity:1}
 .feat-icon{
-  width:48px;height:48px;border-radius:12px;
-  background:rgba(249,115,22,.08);border:1px solid rgba(249,115,22,.15);
+  width:44px;height:44px;border-radius:11px;
   display:flex;align-items:center;justify-content:center;
-  font-size:22px;margin-bottom:20px;
+  font-size:20px;margin-bottom:18px;
 }
-.feat h3{font-size:18px;font-weight:700;margin-bottom:8px;letter-spacing:-.01em}
-.feat p{font-size:14px;color:var(--text2);line-height:1.65}
+.feat-icon.amber{background:rgba(232,146,42,.08);border:1px solid rgba(232,146,42,.15)}
+.feat-icon.cyan{background:rgba(45,212,191,.08);border:1px solid rgba(45,212,191,.15)}
+.feat h3{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}
+.feat p{font-size:13.5px;color:var(--text2);line-height:1.65}
 
-/* Widget categories */
-.categories{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:64px}
+/* -------- WIDGET CATEGORIES -------- */
+.categories{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:56px}
 .cat{
   background:var(--bg2);border:1px solid var(--border);border-radius:14px;
-  padding:24px;text-align:center;transition:all .3s;cursor:default;
+  padding:22px 16px;text-align:center;transition:all .3s;cursor:default;
 }
-.cat:hover{border-color:rgba(255,255,255,.1);background:var(--bg3)}
-.cat-icon{font-size:28px;margin-bottom:12px;display:block}
-.cat-name{font-size:14px;font-weight:700;margin-bottom:4px}
-.cat-count{font-size:12px;color:var(--text3)}
+.cat:hover{border-color:var(--border2);background:var(--bg3)}
+.cat-icon{font-size:26px;margin-bottom:10px;display:block}
+.cat-name{font-size:13px;font-weight:700;margin-bottom:3px}
+.cat-count{font-size:11px;color:var(--text3);line-height:1.5}
 
-/* Bento showcase */
-.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;margin-top:64px}
+/* -------- BENTO -------- */
+.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:56px}
 .bento-card{
   background:var(--bg2);border:1px solid var(--border);border-radius:16px;
-  padding:32px;position:relative;overflow:hidden;transition:all .3s;
+  padding:28px;position:relative;overflow:hidden;transition:all .3s;
 }
-.bento-card:hover{border-color:rgba(249,115,22,.15)}
-.b-wide{grid-column:span 7}
-.b-narrow{grid-column:span 5}
-.b-half{grid-column:span 6}
-.b-full{grid-column:span 12}
-.bento-card h3{font-size:20px;font-weight:700;margin-bottom:8px;letter-spacing:-.01em}
-.bento-card p{font-size:14px;color:var(--text2);line-height:1.6}
+.bento-card:hover{border-color:rgba(232,146,42,.12)}
+.b-7{grid-column:span 7}.b-5{grid-column:span 5}.b-6{grid-column:span 6}.b-12{grid-column:span 12}
+.bento-card h3{font-size:18px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}
+.bento-card p{font-size:13.5px;color:var(--text2);line-height:1.6}
 .bento-preview{
-  margin-top:20px;background:var(--bg);border:1px solid var(--border);
-  border-radius:10px;padding:16px;font-family:'SF Mono',monospace;font-size:13px;
+  margin-top:18px;background:var(--bg);border:1px solid var(--border);
+  border-radius:10px;padding:14px 16px;font-family:'SF Mono',monospace;font-size:12.5px;line-height:1.7;
 }
 
 /* Code block */
 .code-block{
-  background:var(--bg);border:1px solid var(--border);border-radius:12px;
-  padding:24px;margin-top:20px;overflow-x:auto;
-  font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:13px;line-height:1.8;
+  background:var(--bg);border:1px solid var(--border);border-radius:10px;
+  padding:20px;margin-top:18px;overflow-x:auto;
+  font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.85;
 }
-.code-block .comment{color:var(--text3)}
-.code-block .keyword{color:#c084fc}
-.code-block .string{color:#4ade80}
-.code-block .type{color:var(--accent2)}
-.code-block .func{color:#60a5fa}
+.kw{color:#c084fc}.str{color:var(--cyan)}.tp{color:var(--amber2)}.fn{color:#60a5fa}
 
-/* Stats bar */
-.stats{display:flex;gap:48px;justify-content:center;padding:80px 0;flex-wrap:wrap}
-.stat{text-align:center}
-.stat-num{font-size:48px;font-weight:800;letter-spacing:-.04em;background:linear-gradient(135deg,var(--accent),var(--accent3));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.stat-label{font-size:14px;color:var(--text3);margin-top:4px}
+/* Tags */
+.tags{margin-top:18px;display:flex;gap:6px;flex-wrap:wrap}
+.tag{
+  background:var(--bg);border:1px solid var(--border);
+  padding:5px 12px;border-radius:8px;font-size:11.5px;font-weight:500;color:var(--text2);
+}
+.tag.amber{border-color:rgba(232,146,42,.2);color:var(--amber2);background:rgba(232,146,42,.04)}
+.tag.cyan{border-color:rgba(45,212,191,.2);color:var(--cyan);background:rgba(45,212,191,.04)}
 
-/* CTA */
-.cta{text-align:center;padding:120px 0}
-.cta h2{font-size:clamp(36px,6vw,56px);font-weight:800;letter-spacing:-.03em;margin-bottom:16px}
-.cta p{font-size:18px;color:var(--text2);margin-bottom:48px;max-width:480px;margin-left:auto;margin-right:auto}
+/* Security badges */
+.sec-grid{margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.sec{
+  background:rgba(45,212,191,.04);border:1px solid rgba(45,212,191,.12);
+  padding:9px 12px;border-radius:8px;font-size:11.5px;color:var(--cyan);font-weight:500;
+  display:flex;align-items:center;gap:6px;
+}
+.sec::before{content:'';width:5px;height:5px;background:var(--cyan);border-radius:50%;flex-shrink:0}
 
-/* Footer */
-footer{border-top:1px solid var(--border);padding:40px 0;text-align:center}
-footer p{font-size:13px;color:var(--text3)}
-footer a{color:var(--text2)}
+/* -------- CTA -------- */
+.cta{text-align:center;padding:120px 0 100px;position:relative}
+.cta-icon{
+  width:80px;height:80px;border-radius:20px;margin:0 auto 32px;
+  box-shadow:0 0 40px rgba(232,146,42,.12),0 16px 48px rgba(0,0,0,.4);
+}
+.cta h2{
+  font-size:clamp(34px,5.5vw,52px);font-weight:800;letter-spacing:-.035em;margin-bottom:14px;
+  background:linear-gradient(135deg,#fff 20%,var(--amber3) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.cta p{font-size:17px;color:var(--text2);margin-bottom:44px;max-width:440px;margin-left:auto;margin-right:auto;line-height:1.7}
 
-/* Responsive */
+/* -------- FOOTER -------- */
+footer{border-top:1px solid var(--border);padding:36px 0}
+.footer-inner{display:flex;align-items:center;justify-content:space-between}
+.footer-brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:var(--text2)}
+.footer-brand img{width:22px;height:22px;border-radius:6px;opacity:.7}
+.footer-links{display:flex;gap:24px}
+.footer-links a{color:var(--text3);font-size:13px;font-weight:500;transition:color .2s}
+.footer-links a:hover{color:var(--text2)}
+
+/* -------- RESPONSIVE -------- */
 @media(max-width:900px){
   .features{grid-template-columns:repeat(2,1fr)}
   .categories{grid-template-columns:repeat(3,1fr)}
   .bento-card{grid-column:span 12!important}
-  .menubar-demo{display:none}
+  .menubar-wrap{display:none}
+  .sec-grid{grid-template-columns:1fr}
 }
 @media(max-width:600px){
   .features{grid-template-columns:1fr}
   .categories{grid-template-columns:repeat(2,1fr)}
-  .hero-actions{flex-direction:column}
+  .hero-actions{flex-direction:column;width:100%}
+  .btn-download,.btn-gh{width:100%;justify-content:center}
   .nav-links a:not(.nav-dl){display:none}
-  .stats{gap:32px}
+  .stats{flex-direction:column;gap:32px}
+  .stat+.stat::before{display:none}
+  .footer-inner{flex-direction:column;gap:16px}
+  .hero-sub{flex-direction:column;align-items:center;gap:8px}
 }
 
-/* Scroll animations */
-.reveal{opacity:0;transform:translateY(30px);transition:opacity .6s,transform .6s}
+/* Scroll reveal */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .5s ease-out,transform .5s ease-out}
 .reveal.visible{opacity:1;transform:translateY(0)}
 </style>
 </head>
 <body>
 
-<div class="mesh mesh-1"></div>
-<div class="mesh mesh-2"></div>
-<div class="mesh mesh-3"></div>
+<div class="glow glow-1"></div>
+<div class="glow glow-2"></div>
+<div class="glow glow-3"></div>
 
+<!-- NAV -->
 <nav>
   <div class="container">
     <div class="nav-brand">
@@ -255,58 +312,71 @@ footer a{color:var(--text2)}
       <a href="#widgets">Widgets</a>
       <a href="#developers">Developers</a>
       <a href="https://github.com/noamsmall18/barista" target="_blank">GitHub</a>
-      <a href="https://github.com/noamsmall18/barista/releases/latest" class="nav-dl">Download</a>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="nav-dl">Download</a>
     </div>
   </div>
 </nav>
 
+<!-- HERO -->
 <section class="hero">
   <div class="container">
+    <img src="icon.png" alt="Barista" class="hero-icon">
     <div class="hero-badge">
       <span class="dot"></span>
       Open source &middot; Free forever
     </div>
     <h1>Your menu bar,<br>your&nbsp;rules.</h1>
-    <p>52 widgets. Menu bar styling. Script support. Barista is the most powerful menu bar platform for macOS - and it's completely free.</p>
+    <p><strong>52 widgets.</strong> Menu bar styling. Script support. Barista is the most powerful menu bar platform for macOS.</p>
     <div class="hero-actions">
-      <a href="https://github.com/noamsmall18/barista/releases/latest" class="btn-primary">
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="btn-download">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download for macOS
+        <span class="size">(2.2 MB)</span>
       </a>
-      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-secondary">
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-gh">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        View on GitHub
+        Star on GitHub
       </a>
     </div>
-    <div class="hero-meta">
+    <div class="hero-sub">
       <span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        macOS 13+
+        macOS 13+ (Apple Silicon)
       </span>
       <span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Hardened &amp; secure
+        Security hardened
       </span>
       <span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
         Zero dependencies
       </span>
     </div>
 
-    <div class="menubar-demo">
-      <div class="mb-widgets">
-        <span class="mb-w"><span class="mb-green">&#9650;</span> <span class="mb-green">AAPL $198.42 +1.2%</span></span>
-        <span class="mb-w"><span class="mb-red">&#9660;</span> <span class="mb-red">TSLA $162.10 -0.8%</span></span>
-        <span class="mb-w mb-blue">&#9749; 142mg</span>
-        <span class="mb-w mb-orange">&#127813; 25m</span>
-        <span class="mb-w mb-purple">&#128187; 23% CPU</span>
-        <span class="mb-w mb-white">&#9728;&#65039; 72&#176;F</span>
+    <!-- Menu bar mockup -->
+    <div class="menubar-wrap">
+      <div class="menubar-glow"></div>
+      <div class="menubar">
+        <div class="mb-left">
+          <span class="mb-apple"></span>
+          <img src="icon.png" alt="" class="mb-logo">
+          <span class="mb-app">Barista</span>
+        </div>
+        <div class="mb-right">
+          <span class="mb-w mb-g">&#9650; AAPL $198.42 +1.2%</span>
+          <span class="mb-w mb-r">&#9660; TSLA $162.10 -0.8%</span>
+          <span class="mb-w mb-c">&#9749; 142mg</span>
+          <span class="mb-w mb-a">&#127813; 25m</span>
+          <span class="mb-w" style="color:#c084fc">&#128187; 23%</span>
+          <span class="mb-w mb-m">72&#176;F</span>
+          <span class="mb-time">Sun 4:20 PM</span>
+        </div>
       </div>
-      <span class="mb-time">Sun 4:20 PM</span>
     </div>
   </div>
 </section>
 
+<!-- STATS -->
 <div class="stats reveal">
   <div class="stat"><div class="stat-num">52</div><div class="stat-label">Built-in widgets</div></div>
   <div class="stat"><div class="stat-num">12</div><div class="stat-label">Categories</div></div>
@@ -314,52 +384,54 @@ footer a{color:var(--text2)}
   <div class="stat"><div class="stat-num">0</div><div class="stat-label">Dependencies</div></div>
 </div>
 
+<!-- FEATURES -->
 <section id="features">
   <div class="container">
-    <div class="section-label">Why Barista</div>
+    <div class="section-tag"><span class="bar"></span> Features</div>
     <h2 class="section-title">Everything in your menu bar.</h2>
-    <p class="section-desc">Stocks, weather, system stats, calendar, timers, developer tools, sports scores - all live in your menu bar. Click any widget for a rich dropdown.</p>
+    <p class="section-desc">Stocks, weather, system stats, calendar, developer tools, sports scores, and more. Click any widget for a rich interactive dropdown.</p>
 
     <div class="features">
       <div class="feat reveal">
-        <div class="feat-icon">&#127912;</div>
+        <div class="feat-icon amber">&#127912;</div>
         <h3>Menu Bar Styling</h3>
-        <p>Tint your menu bar with solid colors, gradients, time-based dynamic themes, or frosted glass. No other app does this.</p>
+        <p>Tint your menu bar with solid colors, gradients, time-based dynamic themes, or frosted glass effects. Unique to Barista.</p>
       </div>
       <div class="feat reveal">
-        <div class="feat-icon">&#128200;</div>
+        <div class="feat-icon cyan">&#128200;</div>
         <h3>Scrolling Stock Ticker</h3>
-        <p>Real-time scrolling ticker with color-coded gains/losses. Add any symbol. CVDisplayLink-powered smooth animation.</p>
+        <p>Real-time scrolling ticker with color-coded gains and losses. CVDisplayLink-powered smooth 60fps animation.</p>
       </div>
       <div class="feat reveal">
-        <div class="feat-icon">&#128187;</div>
+        <div class="feat-icon amber">&#128187;</div>
         <h3>System Monitoring</h3>
-        <p>CPU, RAM, GPU, temperatures, fan speeds, network, disk, battery, Bluetooth devices, top processes. With sparkline charts.</p>
+        <p>CPU, RAM, GPU, temperature sensors, fan speeds, network, disk, battery, Bluetooth devices, top processes.</p>
       </div>
       <div class="feat reveal">
-        <div class="feat-icon">&#128221;</div>
+        <div class="feat-icon cyan">&#128221;</div>
         <h3>Script Widgets</h3>
-        <p>Full xbar/SwiftBar compatibility. Write shell scripts that render to the menu bar with colors, submenus, and SF Symbols.</p>
+        <p>Full xbar/SwiftBar compatibility. Shell scripts render to the menu bar with colors, submenus, and SF Symbols.</p>
       </div>
       <div class="feat reveal">
-        <div class="feat-icon">&#128197;</div>
+        <div class="feat-icon amber">&#128197;</div>
         <h3>Calendar & Meetings</h3>
-        <p>Mini calendar grid with event dots, next meeting countdown, one-click Zoom/Meet/Teams join links extracted from events.</p>
+        <p>Mini calendar grid with event dots, next meeting countdown, one-click join for Zoom, Meet, and Teams links.</p>
       </div>
       <div class="feat reveal">
-        <div class="feat-icon">&#9889;</div>
+        <div class="feat-icon cyan">&#9889;</div>
         <h3>Profiles</h3>
-        <p>Save widget layouts as profiles. Quick-switch between Work, Home, Presentation, Developer setups with one click.</p>
+        <p>Save widget layouts as named profiles. Quick-switch between Work, Home, Presentation, and Developer setups.</p>
       </div>
     </div>
   </div>
 </section>
 
+<!-- WIDGETS -->
 <section id="widgets" style="padding-top:40px">
   <div class="container">
-    <div class="section-label">Widget Gallery</div>
+    <div class="section-tag"><span class="bar"></span> Widget Gallery</div>
     <h2 class="section-title">52 widgets. 12 categories.</h2>
-    <p class="section-desc">From finance to fitness, developer tools to dad jokes. Every widget has a rich dropdown and is fully configurable.</p>
+    <p class="section-desc">From finance to fitness, developer tools to dad jokes. Every widget is configurable with a rich dropdown.</p>
 
     <div class="categories">
       <div class="cat reveal"><span class="cat-icon">&#128176;</span><div class="cat-name">Finance</div><div class="cat-count">Stock Ticker, Crypto, Forex, Market Status</div></div>
@@ -371,110 +443,124 @@ footer a{color:var(--text2)}
       <div class="cat reveal"><span class="cat-icon">&#127922;</span><div class="cat-name">Fun & Lifestyle</div><div class="cat-count">Quotes, Moon, Jokes, Dice, Caffeine</div></div>
       <div class="cat reveal"><span class="cat-icon">&#9917;</span><div class="cat-name">Sports</div><div class="cat-count">Live Scores, F1 Standings, Soccer</div></div>
       <div class="cat reveal"><span class="cat-icon">&#128240;</span><div class="cat-name">Social</div><div class="cat-count">Hacker News, GitHub Notifications</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#127925;</span><div class="cat-name">Music</div><div class="cat-count">Now Playing with controls</div></div>
+      <div class="cat reveal"><span class="cat-icon">&#127925;</span><div class="cat-name">Music</div><div class="cat-count">Now Playing with playback controls</div></div>
       <div class="cat reveal"><span class="cat-icon">&#128154;</span><div class="cat-name">Health</div><div class="cat-count">Water Reminder, Stand Reminder</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128295;</span><div class="cat-name">Utility</div><div class="cat-count">Keep Awake, Dark Mode, Scripts</div></div>
+      <div class="cat reveal"><span class="cat-icon">&#128295;</span><div class="cat-name">Utility</div><div class="cat-count">Keep Awake, Dark Mode, Script Runner</div></div>
     </div>
   </div>
 </section>
 
+<!-- DEVELOPERS -->
 <section id="developers" style="padding-top:40px">
   <div class="container">
+    <div class="section-tag"><span class="bar"></span> For Developers</div>
+    <h2 class="section-title" style="margin-bottom:0">Extend it. Script it. Build on it.</h2>
+
     <div class="bento">
-      <div class="bento-card b-wide reveal">
-        <div class="section-label">For Developers</div>
+      <div class="bento-card b-7 reveal">
         <h3>Build your own widgets</h3>
-        <p>Implement the <code>BaristaWidget</code> protocol, register it, done. Full access to AppKit, IOKit, EventKit, and any macOS API.</p>
+        <p>Implement <code>BaristaWidget</code>, register it, done. Full access to AppKit, IOKit, EventKit, and every macOS API.</p>
         <div class="code-block">
-<span class="keyword">class</span> <span class="type">MyWidget</span>: <span class="type">BaristaWidget</span> {
-    <span class="keyword">static let</span> widgetID = <span class="string">"my-widget"</span>
-    <span class="keyword">static let</span> displayName = <span class="string">"My Widget"</span>
+<span class="kw">class</span> <span class="tp">MyWidget</span>: <span class="tp">BaristaWidget</span> {
+    <span class="kw">static let</span> widgetID = <span class="str">"my-widget"</span>
+    <span class="kw">static let</span> displayName = <span class="str">"My Widget"</span>
 
-    <span class="keyword">func</span> <span class="func">render</span>() -> <span class="type">WidgetDisplayMode</span> {
-        <span class="keyword">return</span> .<span class="func">text</span>(<span class="string">"Hello World"</span>)
+    <span class="kw">func</span> <span class="fn">render</span>() -> <span class="tp">WidgetDisplayMode</span> {
+        <span class="kw">return</span> .<span class="fn">text</span>(<span class="str">"Hello World"</span>)
     }
-
-    <span class="keyword">func</span> <span class="func">buildDropdownMenu</span>() -> <span class="type">NSMenu</span> { ... }
 }
         </div>
       </div>
-      <div class="bento-card b-narrow reveal">
+      <div class="bento-card b-5 reveal">
         <h3>xbar Compatible</h3>
-        <p>Drop in any xbar/SwiftBar plugin. The Script Widget parses the full xbar format - pipe params, submenus, colors, images.</p>
+        <p>Drop in any xbar/SwiftBar plugin. Full format support: pipe params, submenus, colors, images, actions.</p>
         <div class="bento-preview">
-          <div style="color:var(--accent2)">#!/bin/bash</div>
-          <div><span style="color:#4ade80">echo</span> "Hello | color=green"</div>
+          <div style="color:var(--amber2)">#!/bin/bash</div>
+          <div><span style="color:var(--cyan)">echo</span> "Hello | color=green"</div>
           <div>echo "---"</div>
-          <div><span style="color:#4ade80">echo</span> "Open Site | href=..."</div>
-          <div><span style="color:#4ade80">echo</span> "--Submenu | color=blue"</div>
+          <div><span style="color:var(--cyan)">echo</span> "Open Site | href=..."</div>
+          <div><span style="color:var(--cyan)">echo</span> "--Submenu | color=blue"</div>
         </div>
       </div>
-      <div class="bento-card b-narrow reveal">
-        <h3>Native AppKit</h3>
-        <p>Pure Swift, zero dependencies, no Electron, no web views. Compiles with <code>swift build</code> in seconds. ~18K lines total.</p>
-        <div style="margin-top:20px;display:flex;gap:8px;flex-wrap:wrap">
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">Swift 5.9</span>
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">AppKit</span>
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">SPM</span>
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">IOKit</span>
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">EventKit</span>
-          <span style="background:var(--bg);border:1px solid var(--border);padding:6px 12px;border-radius:8px;font-size:12px">CoreGraphics</span>
+      <div class="bento-card b-5 reveal">
+        <h3>Pure Native Stack</h3>
+        <p>Swift + AppKit. No Electron, no web views, no frameworks. Compiles with <code>swift build</code> in under 5 seconds.</p>
+        <div class="tags">
+          <span class="tag amber">Swift 5.9</span>
+          <span class="tag amber">AppKit</span>
+          <span class="tag amber">SPM</span>
+          <span class="tag cyan">IOKit</span>
+          <span class="tag cyan">EventKit</span>
+          <span class="tag cyan">CoreGraphics</span>
         </div>
       </div>
-      <div class="bento-card b-wide reveal">
+      <div class="bento-card b-7 reveal">
         <h3>Security Hardened</h3>
-        <p>HTTPS-only network requests. Shell whitelist for script execution. URL-encoded API parameters. Sanitized inputs for all system commands. No auto-chmod. Blocked system path execution.</p>
-        <div style="margin-top:16px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
-          <div style="background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15);padding:10px 14px;border-radius:10px;font-size:12px;color:#4ade80">HTTPS enforced</div>
-          <div style="background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15);padding:10px 14px;border-radius:10px;font-size:12px;color:#4ade80">Shell whitelist</div>
-          <div style="background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15);padding:10px 14px;border-radius:10px;font-size:12px;color:#4ade80">Input sanitization</div>
+        <p>Open source and auditable. Every network request, script execution, and system call is locked down.</p>
+        <div class="sec-grid">
+          <div class="sec">HTTPS enforced on all requests</div>
+          <div class="sec">Shell whitelist for script execution</div>
+          <div class="sec">Sanitized inputs on all commands</div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
+<!-- CTA -->
 <section class="cta">
   <div class="container">
+    <img src="icon.png" alt="Barista" class="cta-icon">
     <h2>Ready to brew?</h2>
     <p>Download Barista and make your menu bar actually useful. Free, open source, no account required.</p>
     <div class="hero-actions">
-      <a href="https://github.com/noamsmall18/barista/releases/latest" class="btn-primary">
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="btn-download">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download for macOS
+        <span class="size">(2.2 MB)</span>
       </a>
-      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-secondary">
-        <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        Star on GitHub
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-gh">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        View Source
       </a>
     </div>
   </div>
 </section>
 
+<!-- FOOTER -->
 <footer>
   <div class="container">
-    <p>Built by <a href="https://github.com/noamsmall18">Noam Small</a> &middot; MIT License &middot; <a href="https://github.com/noamsmall18/barista">Source on GitHub</a></p>
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="icon.png" alt="">
+        Barista
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/noamsmall18/barista">GitHub</a>
+        <a href="https://github.com/noamsmall18/barista/releases">Releases</a>
+        <a href="https://github.com/noamsmall18/barista/blob/main/LICENSE">MIT License</a>
+        <a href="https://github.com/noamsmall18">@noamsmall18</a>
+      </div>
+    </div>
   </div>
 </footer>
 
 <script>
-// Scroll reveal
-const reveals = document.querySelectorAll('.reveal');
-const observer = new IntersectionObserver((entries) => {
-  entries.forEach((e, i) => {
-    if (e.isIntersecting) {
-      setTimeout(() => e.target.classList.add('visible'), i * 60);
-      observer.unobserve(e.target);
+const reveals=document.querySelectorAll('.reveal');
+const obs=new IntersectionObserver((entries)=>{
+  entries.forEach((e,i)=>{
+    if(e.isIntersecting){
+      setTimeout(()=>e.target.classList.add('visible'),i*50);
+      obs.unobserve(e.target);
     }
   });
-}, { threshold: 0.15 });
-reveals.forEach(el => observer.observe(el));
+},{threshold:.12});
+reveals.forEach(el=>obs.observe(el));
 
-// Smooth scroll for nav links
-document.querySelectorAll('a[href^="#"]').forEach(a => {
-  a.addEventListener('click', e => {
+document.querySelectorAll('a[href^="#"]').forEach(a=>{
+  a.addEventListener('click',e=>{
     e.preventDefault();
-    document.querySelector(a.getAttribute('href'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelector(a.getAttribute('href'))?.scrollIntoView({behavior:'smooth',block:'start'});
   });
 });
 </script>
