@@ -1,0 +1,29 @@
+name: StockTicker
+options:
+  bundleIdPrefix: com.noam
+  deploymentTarget:
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+
+targets:
+  StockTicker:
+    type: application
+    platform: macOS
+    sources:
+      - StockTicker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.noam.stockticker
+        PRODUCT_NAME: StockTicker
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        INFOPLIST_FILE: StockTicker/Info.plist
+        CODE_SIGN_ENTITLEMENTS: StockTicker/StockTicker.entitlements
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        SWIFT_VERSION: "5.9"
+        COMBINE_HIDPI_IMAGES: true
+    entitlements:
+      path: StockTicker/StockTicker.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.network.client: true
