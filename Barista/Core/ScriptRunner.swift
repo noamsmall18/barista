@@ -9,6 +9,14 @@ class ScriptRunner {
         let timedOut: Bool
     }
 
+    /// Allowed shells to prevent arbitrary executable invocation.
+    private static let allowedShells: Set<String> = [
+        "/bin/zsh", "/bin/bash", "/bin/sh",
+        "/usr/bin/zsh", "/usr/bin/bash",
+        "/usr/local/bin/bash", "/usr/local/bin/zsh",
+        "/opt/homebrew/bin/bash", "/opt/homebrew/bin/zsh",
+    ]
+
     /// Run a script file or inline command.
     static func run(
         command: String,
@@ -18,6 +26,11 @@ class ScriptRunner {
         workingDirectory: String? = nil,
         timeout: TimeInterval = 30
     ) -> Result {
+        // Validate shell is an allowed interpreter
+        guard allowedShells.contains(shell) else {
+            return Result(stdout: "", stderr: "Blocked: '\(shell)' is not an allowed shell", exitCode: -1, timedOut: false)
+        }
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-c", command] + arguments
@@ -74,11 +87,25 @@ class ScriptRunner {
         shell: String = "/bin/zsh",
         timeout: TimeInterval = 30
     ) -> Result {
-        // Make sure it's executable
         let fm = FileManager.default
-        if fm.fileExists(atPath: path) {
-            try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+
+        // Resolve to absolute path and check it exists
+        let resolved = (path as NSString).standardizingPath
+        guard fm.fileExists(atPath: resolved) else {
+            return Result(stdout: "", stderr: "Script not found: \(resolved)", exitCode: -1, timedOut: false)
         }
-        return run(command: path, shell: shell, timeout: timeout)
+
+        // Block paths outside user-accessible directories
+        let blocked = ["/System", "/Library", "/usr", "/bin", "/sbin", "/private/var", "/etc"]
+        if blocked.contains(where: { resolved.hasPrefix($0) }) {
+            return Result(stdout: "", stderr: "Blocked: cannot run scripts from \(resolved)", exitCode: -1, timedOut: false)
+        }
+
+        // Check file is executable; do NOT auto-chmod
+        guard fm.isExecutableFile(atPath: resolved) else {
+            return Result(stdout: "", stderr: "Script is not executable: \(resolved). Run chmod +x on it first.", exitCode: -1, timedOut: false)
+        }
+
+        return run(command: resolved, shell: shell, timeout: timeout)
     }
 }

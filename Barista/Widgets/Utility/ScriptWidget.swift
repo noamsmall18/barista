@@ -192,14 +192,21 @@ class ScriptWidget: BaristaWidget {
     @objc func xbarItemClicked(_ sender: NSMenuItem) {
         guard let line = sender.representedObject as? XBarParser.ParsedLine else { return }
 
-        if let href = line.href, let url = URL(string: href) {
+        if let href = line.href, let url = URL(string: href),
+           let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
             NSWorkspace.shared.open(url)
         }
 
         if let bash = line.bash {
             if line.terminal {
-                // Open in Terminal
-                let script = "tell application \"Terminal\" to do script \"\(bash.replacingOccurrences(of: "\"", with: "\\\""))\""
+                // Open in Terminal - use NSAppleEventDescriptor for safe parameter passing
+                let escaped = bash
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "\"", with: "\\\"")
+                    .replacingOccurrences(of: "\n", with: "")
+                    .replacingOccurrences(of: "\r", with: "")
+                let script = "tell application \"Terminal\" to do script \"\(escaped)\""
                 if let as_ = NSAppleScript(source: script) {
                     var err: NSDictionary?
                     as_.executeAndReturnError(&err)

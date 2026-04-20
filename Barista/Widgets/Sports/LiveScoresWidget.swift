@@ -69,7 +69,9 @@ class LiveScoresWidget: BaristaWidget, Cycleable {
     }
 
     private func fetchScores() {
-        let urlStr = "https://site.api.espn.com/apis/site/v2/sports/\(config.sport)/\(config.league)/scoreboard"
+        let safeSport = config.sport.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        let safeLeague = config.league.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        let urlStr = "https://site.api.espn.com/apis/site/v2/sports/\(safeSport)/\(safeLeague)/scoreboard"
         guard let url = URL(string: urlStr) else { return }
 
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in

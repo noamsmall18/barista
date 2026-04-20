@@ -37,6 +37,12 @@ class DataFetcher {
 
     /// Full fetch with method, headers, body, and caching.
     func fetch(_ request: FetchRequest, completion: @escaping (Result<Data, Error>) -> Void) {
+        // Enforce HTTPS for all requests
+        guard let scheme = request.url.scheme?.lowercased(), scheme == "https" else {
+            completion(.failure(URLError(.badURL, userInfo: [NSLocalizedDescriptionKey: "Only HTTPS requests are allowed"])))
+            return
+        }
+
         let key = "\(request.method):\(request.url.absoluteString)"
 
         // Check cache

@@ -80,7 +80,8 @@ class SoccerTableWidget: BaristaWidget, Cycleable {
             return
         }
 
-        let urlStr = "https://api.football-data.org/v4/competitions/\(config.competitionCode)/standings"
+        let safeCode = config.competitionCode.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        let urlStr = "https://api.football-data.org/v4/competitions/\(safeCode)/standings"
         guard let url = URL(string: urlStr) else { return }
 
         let request = DataFetcher.FetchRequest(

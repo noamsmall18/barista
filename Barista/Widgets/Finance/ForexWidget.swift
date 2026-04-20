@@ -49,7 +49,9 @@ class ForexWidget: BaristaWidget {
     }
 
     private func fetchRate() {
-        let urlStr = "https://api.frankfurter.app/latest?from=\(config.baseCurrency)&to=\(config.targetCurrency)"
+        let base = config.baseCurrency.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let target = config.targetCurrency.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlStr = "https://api.frankfurter.app/latest?from=\(base)&to=\(target)"
         guard let url = URL(string: urlStr) else { return }
 
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in

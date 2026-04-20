@@ -174,7 +174,8 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private func fetchSingle(symbol: String) {
-        let urlStr = "https://query1.finance.yahoo.com/v8/finance/chart/\(symbol)?interval=1d&range=1d"
+        let safeSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
+        let urlStr = "https://query1.finance.yahoo.com/v8/finance/chart/\(safeSymbol)?interval=1d&range=1d"
         guard let url = URL(string: urlStr) else { return }
 
         DataFetcher.shared.fetch(url: url, maxAge: max(config.refreshInterval * 0.8, 10)) { [weak self] result in

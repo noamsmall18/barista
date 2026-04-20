@@ -179,8 +179,9 @@ class CryptoWidget: BaristaWidget {
     // MARK: - Fetching
 
     private func fetchPrices() {
-        let ids = config.coins.joined(separator: ",")
-        let urlStr = "https://api.coingecko.com/api/v3/simple/price?ids=\(ids)&vs_currencies=\(config.currency)&include_24hr_change=true"
+        let ids = config.coins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let currency = config.currency.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let urlStr = "https://api.coingecko.com/api/v3/simple/price?ids=\(ids)&vs_currencies=\(currency)&include_24hr_change=true"
         guard let url = URL(string: urlStr) else { return }
 
         DataFetcher.shared.fetch(url: url, maxAge: max(config.refreshInterval * 0.8, 30)) { [weak self] result in

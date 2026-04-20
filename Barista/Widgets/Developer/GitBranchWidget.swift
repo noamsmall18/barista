@@ -66,7 +66,7 @@ class GitBranchWidget: BaristaWidget {
     private func runGit(_ args: String) -> String? {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        proc.arguments = ["-C", resolvedPath] + args.components(separatedBy: " ")
+        proc.arguments = ["-C", resolvedPath] + args.split(separator: " ").map(String.init)
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()

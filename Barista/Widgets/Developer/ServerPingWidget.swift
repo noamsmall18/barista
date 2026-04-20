@@ -83,9 +83,15 @@ class ServerPingWidget: BaristaWidget, Cycleable {
     }
 
     private func pingHost(_ host: String) -> Double? {
+        // Sanitize host: only allow alphanumeric, dots, hyphens, and colons (IPv6)
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-:"))
+        let sanitized = host.unicodeScalars.filter { allowed.contains($0) }.map { Character($0) }
+        let safeHost = String(sanitized)
+        guard !safeHost.isEmpty, safeHost.count == host.count else { return nil }
+
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/sbin/ping")
-        proc.arguments = ["-c", "1", "-t", "5", host]
+        proc.arguments = ["-c", "1", "-t", "5", safeHost]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
