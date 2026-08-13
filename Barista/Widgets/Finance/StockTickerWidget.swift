@@ -1,44 +1,499 @@
 import Cocoa
+import UserNotifications
 
-// MARK: - Stock Quote
+// MARK: - Data Types
 
-struct StockQuote {
+struct MarketQuote: Codable, Equatable {
+    enum Kind: String, Codable { case stock, crypto }
     let symbol: String
     let price: Double
     let change: Double
+    let kind: Kind
+    var previousClose: Double? = nil
+    var dayHigh: Double?
+    var dayLow: Double?
+    var volume: Double?
+    var sparkline: [Double]
+    var marketCap: Double?
+    var fiftyTwoWeekHigh: Double?
+    var fiftyTwoWeekLow: Double?
+    var openPrice: Double?
+    var peRatio: Double?
+
+    // Extended hours (stocks only)
+    var preMarketPrice: Double?
+    var preMarketChange: Double?
+    var postMarketPrice: Double?
+    var postMarketChange: Double?
+    var marketState: String?
 
     var isUp: Bool { change >= 0 }
-    var arrow: String { isUp ? "+" : "" }
 
-    var formatted: String {
-        String(format: "%@ $%.2f %@%.1f%%", symbol, price, isUp ? "+" : "", change)
+    var currentPrice: Double {
+        extendedHours?.price ?? price
+    }
+
+    var currentChange: Double {
+        if let ext = extendedHours,
+           let previousClose,
+           previousClose > 0 {
+            return (ext.price - previousClose) / previousClose * 100
+        }
+        return change
+    }
+
+    var currentIsUp: Bool { currentChange >= 0 }
+
+    var marketStatus: MarketStatus {
+        MarketStatus.fromYahooMarketState(marketState) ?? MarketStatus.current()
+    }
+
+    var chartChange: Double {
+        kind == .stock ? currentChange : change
+    }
+
+    var chartBaseline: Double? {
+        switch kind {
+        case .stock:
+            return previousClose ?? baselinePrice ?? sparkline.first
+        case .crypto:
+            return sparkline.first ?? baselinePrice
+        }
+    }
+
+    var chartSeries: [Double] {
+        var series = sparkline.filter { $0.isFinite && $0 > 0 }
+        if series.isEmpty {
+            if let chartBaseline, chartBaseline > 0, currentPrice > 0 {
+                return [chartBaseline, currentPrice]
+            }
+            return []
+        }
+        if currentPrice > 0 {
+            series[series.count - 1] = currentPrice
+        }
+        if series.count == 1, let chartBaseline, chartBaseline > 0, chartBaseline != series[0] {
+            series.insert(chartBaseline, at: 0)
+        }
+        return series
+    }
+
+    var baselinePrice: Double? {
+        if let previousClose, previousClose > 0 { return previousClose }
+        let denominator = 1 + (change / 100.0)
+        guard denominator > 0 else { return nil }
+        return price / denominator
+    }
+
+    func dailyValueChange(for quantity: Double) -> Double {
+        guard quantity > 0 else { return 0 }
+        guard let baselinePrice else { return 0 }
+        return (price - baselinePrice) * quantity
+    }
+
+    func currentValueChange(for quantity: Double) -> Double {
+        guard quantity > 0 else { return 0 }
+        guard let baselinePrice else { return 0 }
+        return (currentPrice - baselinePrice) * quantity
+    }
+
+    var extendedHours: (price: Double, change: Double, label: String)? {
+        switch marketStatus {
+        case .preMarket:
+            if let p = preMarketPrice, let c = preMarketChange { return (p, c, "Pre") }
+        case .afterHours:
+            if let p = postMarketPrice, let c = postMarketChange { return (p, c, "AH") }
+        case .closed:
+            return nil
+        case .open:
+            return nil
+        }
+        return nil
     }
 }
 
-// MARK: - Stock Ticker Config
+struct PortfolioPosition {
+    let quote: MarketQuote
+    let quantity: Double
 
-struct StockTickerConfig: Codable, Equatable {
-    var symbols: [String]
-    var scrollSpeed: Double
-    var coloredTicker: Bool
-    var refreshInterval: TimeInterval
-    var tickerWidth: Double
+    var value: Double { quote.currentPrice * quantity }
+    var baselinePrice: Double { quote.baselinePrice ?? quote.currentPrice }
+    var baselineValue: Double { baselinePrice * quantity }
+    var dailyPL: Double { value - baselineValue }
 
-    static let `default` = StockTickerConfig(
-        symbols: ["DUOL", "HIMS", "NOW", "PGY", "QQQ", "SPY"],
-        scrollSpeed: 0.3,
-        coloredTicker: true,
-        refreshInterval: 60,
-        tickerWidth: 160
-    )
+    var dailyPercent: Double {
+        guard baselineValue > 0 else { return 0 }
+        return dailyPL / baselineValue * 100
+    }
 }
 
-// MARK: - Stock Ticker Widget
+struct PortfolioSnapshot {
+    let positions: [PortfolioPosition]
+    let missingSymbols: [String]
+    let cash: Double
+    let total: Double
+    let baselineTotal: Double
+    let dailyPL: Double
+
+    var dailyPercent: Double {
+        guard baselineTotal > 0 else { return 0 }
+        return dailyPL / baselineTotal * 100
+    }
+
+    var winners: Int { positions.filter { $0.dailyPL > 0.005 }.count }
+    var losers: Int { positions.filter { $0.dailyPL < -0.005 }.count }
+    var bestPosition: PortfolioPosition? { positions.max { $0.dailyPL < $1.dailyPL } }
+    var worstPosition: PortfolioPosition? { positions.min { $0.dailyPL < $1.dailyPL } }
+    var topExposure: PortfolioPosition? { positions.max { $0.value < $1.value } }
+
+    func weight(of position: PortfolioPosition) -> Double {
+        guard total > 0 else { return 0 }
+        return position.value / total * 100
+    }
+}
+
+struct MarketBreadth {
+    let advancing: Int
+    let declining: Int
+    let flat: Int
+    let averageChange: Double
+    let leader: MarketQuote?
+    let laggard: MarketQuote?
+
+    var total: Int { advancing + declining + flat }
+}
+
+private struct QuoteCachePayload: Codable {
+    let quotes: [MarketQuote]
+    let indexQuotes: [MarketQuote]
+    let lastUpdated: Date
+}
+
+// MARK: - Enums
+
+enum TickerDisplayMode: String, Codable, Equatable {
+    case scrolling     // scrolling ticker tape
+    case focused       // one stock at a time, cycling
+    case compact       // "AAPL +2.3%" minimal
+    case sparkline     // price chart + ticker label
+    case portfolio     // total portfolio value + daily change
+}
+
+enum TickerSortMode: String, Codable, Equatable {
+    case manual, alphabetical, changeDesc, changeAsc, priceDesc
+}
+
+enum TickerAccentPreset: String, Codable, Equatable, CaseIterable {
+    case blue, cyan, green, amber, purple, red, white
+
+    var color: NSColor {
+        switch self {
+        case .blue:   return NSColor(red: 0.30, green: 0.65, blue: 0.95, alpha: 1)
+        case .cyan:   return NSColor(red: 0.30, green: 0.85, blue: 0.90, alpha: 1)
+        case .green:  return NSColor(red: 0.30, green: 0.85, blue: 0.55, alpha: 1)
+        case .amber:  return NSColor(red: 0.96, green: 0.66, blue: 0.23, alpha: 1)
+        case .purple: return NSColor(red: 0.65, green: 0.45, blue: 0.90, alpha: 1)
+        case .red:    return NSColor(red: 1.0, green: 0.35, blue: 0.30, alpha: 1)
+        case .white:  return NSColor(red: 0.90, green: 0.90, blue: 0.92, alpha: 1)
+        }
+    }
+}
+
+enum TickerColorMode: String, Codable, Equatable {
+    case dynamic // green/red based on change direction + intensity
+    case fixed   // always uses accentColor
+}
+
+// MARK: - Config
+
+struct StockTickerConfig: Codable, Equatable {
+    // Watchlist - shared across every portfolio
+    var symbols: [String]
+    var coins: [String]
+
+    // Portfolios - exactly one is active at a time
+    var portfolios: [Portfolio]
+    var activePortfolioID: String
+
+    /// Index of the active portfolio, falling back to the first if the id went stale.
+    var activePortfolioIndex: Int {
+        portfolios.firstIndex { $0.id == activePortfolioID } ?? 0
+    }
+
+    var activePortfolio: Portfolio? {
+        portfolios.indices.contains(activePortfolioIndex) ? portfolios[activePortfolioIndex] : nil
+    }
+
+    private mutating func mutateActive(_ body: (inout Portfolio) -> Void) {
+        guard portfolios.indices.contains(activePortfolioIndex) else { return }
+        body(&portfolios[activePortfolioIndex])
+    }
+
+    /// Positions of the active portfolio. Kept as a proxy so every existing
+    /// `config.holdings` call site keeps working against whichever portfolio is selected.
+    var holdings: [String: Double] {
+        get { activePortfolio?.holdings ?? [:] }
+        set { mutateActive { $0.holdings = newValue } }
+    }
+
+    /// Uninvested cash of the active portfolio.
+    var cash: Double {
+        get { activePortfolio?.cash ?? 0 }
+        set { mutateActive { $0.cash = newValue } }
+    }
+
+    // Display
+    var displayMode: TickerDisplayMode
+    var colorMode: TickerColorMode
+    var accentColor: TickerAccentPreset
+    var coloredTicker: Bool
+    var showExtendedHours: Bool
+
+    // Ticker bar
+    var scrollSpeed: Double
+    var tickerWidth: Double
+    var focusCycleSeconds: Double
+
+    // Data toggles
+    var showVolume: Bool
+    var showSparklines: Bool
+    var showIndices: Bool
+    var showMarketCap: Bool
+    var showDayRange: Bool
+    var showPERatio: Bool
+
+    // Sorting
+    var sortMode: TickerSortMode
+
+    // Refresh
+    var refreshInterval: TimeInterval
+
+    // Crypto
+    var cryptoCurrency: String
+
+    // Alerts
+    var priceAlerts: [String: Double]
+
+    static let `default` = StockTickerConfig(
+        symbols: ["AAPL", "MSFT", "SPY"],
+        coins: ["bitcoin", "ethereum"],
+        holdings: [:],
+        cash: 0,
+        displayMode: .scrolling,
+        colorMode: .dynamic,
+        accentColor: .green,
+        coloredTicker: true,
+        showExtendedHours: true,
+        scrollSpeed: 0.3,
+        tickerWidth: 200,
+        focusCycleSeconds: 5,
+        showVolume: true,
+        showSparklines: true,
+        showIndices: true,
+        showMarketCap: true,
+        showDayRange: true,
+        showPERatio: false,
+        sortMode: .manual,
+        refreshInterval: 5,
+        cryptoCurrency: "usd",
+        priceAlerts: [:]
+    )
+
+    enum CodingKeys: String, CodingKey {
+        case portfolios, activePortfolioID
+        case symbols, coins, holdings, cash, scrollSpeed, coloredTicker, refreshInterval
+        case tickerWidth, cryptoCurrency, showVolume, showSparklines, showIndices, showExtendedHours
+        case displayMode, focusCycleSeconds, sortMode, priceAlerts
+        case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
+    }
+
+    init(symbols: [String] = ["AAPL", "MSFT", "SPY"], coins: [String] = ["bitcoin", "ethereum"],
+         holdings: [String: Double] = [:], cash: Double = 0, displayMode: TickerDisplayMode = .scrolling,
+         colorMode: TickerColorMode = .dynamic, accentColor: TickerAccentPreset = .green,
+         coloredTicker: Bool = true, showExtendedHours: Bool = true,
+         scrollSpeed: Double = 0.3, tickerWidth: Double = 200,
+         focusCycleSeconds: Double = 5,
+         showVolume: Bool = true, showSparklines: Bool = true,
+         showIndices: Bool = true, showMarketCap: Bool = true,
+         showDayRange: Bool = true, showPERatio: Bool = false,
+         sortMode: TickerSortMode = .manual, refreshInterval: TimeInterval = 5,
+         cryptoCurrency: String = "usd", priceAlerts: [String: Double] = [:]) {
+        self.symbols = symbols; self.coins = coins
+        let initial = Portfolio(name: Portfolio.fallbackName, holdings: holdings, cash: cash)
+        self.portfolios = [initial]
+        self.activePortfolioID = initial.id
+        self.displayMode = displayMode; self.colorMode = colorMode; self.accentColor = accentColor
+        self.coloredTicker = coloredTicker; self.showExtendedHours = showExtendedHours
+        self.scrollSpeed = scrollSpeed; self.tickerWidth = tickerWidth
+        self.focusCycleSeconds = focusCycleSeconds
+        self.showVolume = showVolume; self.showSparklines = showSparklines
+        self.showIndices = showIndices; self.showMarketCap = showMarketCap
+        self.showDayRange = showDayRange; self.showPERatio = showPERatio
+        self.sortMode = sortMode; self.refreshInterval = refreshInterval
+        self.cryptoCurrency = cryptoCurrency; self.priceAlerts = priceAlerts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        symbols = try c.decodeIfPresent([String].self, forKey: .symbols) ?? Self.default.symbols
+        coins = try c.decodeIfPresent([String].self, forKey: .coins) ?? []
+        // Portfolios. Configs written before multi-portfolio support carry a flat
+        // holdings/cash pair - fold those into a single "Main" portfolio so nothing is lost.
+        let legacyHoldings = try c.decodeIfPresent([String: Double].self, forKey: .holdings) ?? [:]
+        let legacyCash = try c.decodeIfPresent(Double.self, forKey: .cash) ?? 0
+        let stored = try c.decodeIfPresent([Portfolio].self, forKey: .portfolios) ?? []
+
+        if stored.isEmpty {
+            let migrated = Portfolio(name: Portfolio.fallbackName,
+                                     holdings: legacyHoldings,
+                                     cash: legacyCash)
+            portfolios = [migrated]
+            activePortfolioID = migrated.id
+        } else {
+            portfolios = stored
+            let savedID = try c.decodeIfPresent(String.self, forKey: .activePortfolioID)
+            activePortfolioID = stored.contains { $0.id == savedID } ? savedID! : stored[0].id
+        }
+        displayMode = try c.decodeIfPresent(TickerDisplayMode.self, forKey: .displayMode) ?? .scrolling
+        colorMode = try c.decodeIfPresent(TickerColorMode.self, forKey: .colorMode) ?? .dynamic
+        accentColor = try c.decodeIfPresent(TickerAccentPreset.self, forKey: .accentColor) ?? .green
+        coloredTicker = try c.decodeIfPresent(Bool.self, forKey: .coloredTicker) ?? true
+        showExtendedHours = try c.decodeIfPresent(Bool.self, forKey: .showExtendedHours) ?? true
+        scrollSpeed = try c.decodeIfPresent(Double.self, forKey: .scrollSpeed) ?? 0.3
+        tickerWidth = try c.decodeIfPresent(Double.self, forKey: .tickerWidth) ?? 200
+        focusCycleSeconds = try c.decodeIfPresent(Double.self, forKey: .focusCycleSeconds) ?? 5
+        showVolume = try c.decodeIfPresent(Bool.self, forKey: .showVolume) ?? true
+        showSparklines = try c.decodeIfPresent(Bool.self, forKey: .showSparklines) ?? true
+        showIndices = try c.decodeIfPresent(Bool.self, forKey: .showIndices) ?? true
+        showMarketCap = try c.decodeIfPresent(Bool.self, forKey: .showMarketCap) ?? true
+        showDayRange = try c.decodeIfPresent(Bool.self, forKey: .showDayRange) ?? true
+        showPERatio = try c.decodeIfPresent(Bool.self, forKey: .showPERatio) ?? false
+        sortMode = try c.decodeIfPresent(TickerSortMode.self, forKey: .sortMode) ?? .manual
+        refreshInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? 5
+        cryptoCurrency = try c.decodeIfPresent(String.self, forKey: .cryptoCurrency) ?? "usd"
+        priceAlerts = try c.decodeIfPresent([String: Double].self, forKey: .priceAlerts) ?? [:]
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(portfolios, forKey: .portfolios)
+        try c.encode(activePortfolioID, forKey: .activePortfolioID)
+
+        // Also written flat so an older build still finds the active portfolio
+        // instead of falling back to an empty one.
+        try c.encode(holdings, forKey: .holdings)
+        try c.encode(cash, forKey: .cash)
+
+        try c.encode(symbols, forKey: .symbols)
+        try c.encode(coins, forKey: .coins)
+        try c.encode(displayMode, forKey: .displayMode)
+        try c.encode(colorMode, forKey: .colorMode)
+        try c.encode(accentColor, forKey: .accentColor)
+        try c.encode(coloredTicker, forKey: .coloredTicker)
+        try c.encode(showExtendedHours, forKey: .showExtendedHours)
+        try c.encode(scrollSpeed, forKey: .scrollSpeed)
+        try c.encode(tickerWidth, forKey: .tickerWidth)
+        try c.encode(focusCycleSeconds, forKey: .focusCycleSeconds)
+        try c.encode(showVolume, forKey: .showVolume)
+        try c.encode(showSparklines, forKey: .showSparklines)
+        try c.encode(showIndices, forKey: .showIndices)
+        try c.encode(showMarketCap, forKey: .showMarketCap)
+        try c.encode(showDayRange, forKey: .showDayRange)
+        try c.encode(showPERatio, forKey: .showPERatio)
+        try c.encode(sortMode, forKey: .sortMode)
+        try c.encode(refreshInterval, forKey: .refreshInterval)
+        try c.encode(cryptoCurrency, forKey: .cryptoCurrency)
+        try c.encode(priceAlerts, forKey: .priceAlerts)
+    }
+}
+
+// MARK: - Coin Symbols
+
+let coinSymbols: [String: String] = [
+    "bitcoin": "BTC", "ethereum": "ETH", "solana": "SOL",
+    "cardano": "ADA", "dogecoin": "DOGE", "ripple": "XRP",
+    "polkadot": "DOT", "avalanche-2": "AVAX", "chainlink": "LINK",
+    "litecoin": "LTC", "polygon": "MATIC", "uniswap": "UNI",
+    "binancecoin": "BNB", "tron": "TRX", "shiba-inu": "SHIB",
+    "toncoin": "TON", "stellar": "XLM", "sui": "SUI",
+    "pepe": "PEPE", "near": "NEAR", "aptos": "APT",
+    "arbitrum": "ARB", "optimism": "OP", "cosmos": "ATOM",
+    "hedera": "HBAR", "render-token": "RNDR", "injective-protocol": "INJ",
+    "fetch-ai": "FET", "bonk": "BONK", "jupiter-exchange-solana": "JUP",
+]
+
+let symbolToCoinID: [String: String] = {
+    var m: [String: String] = [:]
+    for (id, sym) in coinSymbols { m[sym] = id }
+    return m
+}()
+
+// MARK: - Market Status
+
+enum MarketStatus {
+    case preMarket, open, afterHours, closed
+
+    var label: String {
+        switch self {
+        case .preMarket: return "Pre-Market"
+        case .open: return "Market Open"
+        case .afterHours: return "After Hours"
+        case .closed: return "Market Closed"
+        }
+    }
+
+    var color: NSColor {
+        switch self {
+        case .open: return NSColor(red: 0.25, green: 0.85, blue: 0.55, alpha: 1)
+        case .preMarket, .afterHours: return Theme.brandAmber
+        case .closed: return Theme.textMuted
+        }
+    }
+
+    static func current() -> MarketStatus {
+        let et = TimeZone(identifier: "America/New_York")!
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = et
+        let now = Date()
+        let wd = cal.component(.weekday, from: now)
+        if wd == 1 || wd == 7 { return .closed }
+        let t = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
+        if t < 240 { return .closed }
+        if t < 570 { return .preMarket }
+        if t < 960 { return .open }
+        if t < 1200 { return .afterHours }
+        return .closed
+    }
+
+    static func fromYahooMarketState(_ raw: String?) -> MarketStatus? {
+        guard let raw else { return nil }
+        switch raw.uppercased() {
+        case "PRE":
+            return .preMarket
+        case "REGULAR":
+            return .open
+        case "POST":
+            return .afterHours
+        case "CLOSED", "PREPRE", "POSTPOST":
+            return .closed
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - Config Changed Notification
+
+extension NSNotification.Name {
+    static let baristaWidgetConfigChanged = NSNotification.Name("BaristaWidgetConfigChanged")
+}
+
+// MARK: - Market Ticker Widget
 
 class StockTickerWidget: BaristaWidget {
     static let widgetID = "stock-ticker"
-    static let displayName = "Stock Ticker"
-    static let subtitle = "Live scrolling stock prices"
+    static let displayName = "Market Ticker"
+    static let subtitle = "Live stocks & crypto prices"
     static let iconName = "chart.line.uptrend.xyaxis"
     static let category = WidgetCategory.finance
     static let allowsMultiple = false
@@ -47,20 +502,49 @@ class StockTickerWidget: BaristaWidget {
 
     var config: StockTickerConfig
     var onDisplayUpdate: (() -> Void)?
-    var refreshInterval: TimeInterval? { config.refreshInterval }
+    var refreshInterval: TimeInterval? { effectiveRefreshInterval }
 
-    private(set) var quotes: [StockQuote] = []
+    private(set) var quotes: [MarketQuote] = []
+    private(set) var indexQuotes: [MarketQuote] = []
     private(set) var lastFetchFailed = false
+    private(set) var lastUpdated: Date?
+    private(set) var failedSymbols: Set<String> = []
+    private(set) var isUsingCachedData = false
     private var timer: Timer?
+    private var currentTimerInterval: TimeInterval = 0
+    fileprivate var focusedIndex: Int = 0
+    fileprivate var popoverVC: MarketPopoverController?
+    private var previousPrices: [String: Double] = [:]
+
+    var onDataRefresh: (() -> Void)?
+
+    private static let indexSymbols = ["SPY", "QQQ", "DIA"]
+    private static let quoteCacheKey = "barista.stockTicker.lastGoodQuotes"
+    static let turboRefreshInterval: TimeInterval = 5
+
+    private var effectiveRefreshInterval: TimeInterval {
+        max(2, min(config.refreshInterval, Self.turboRefreshInterval))
+    }
+
+    private var quoteCacheAge: TimeInterval {
+        max(1, effectiveRefreshInterval * 0.45)
+    }
+
+    private var cryptoCacheAge: TimeInterval {
+        max(3, effectiveRefreshInterval * 0.8)
+    }
 
     required init(config: StockTickerConfig) {
         self.config = config
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
     func start() {
-        fetchAll()
-        timer = Timer.scheduledTimer(withTimeInterval: config.refreshInterval, repeats: true) { [weak self] _ in
-            self?.fetchAll()
+        currentTimerInterval = effectiveRefreshInterval
+        loadCachedQuotesIfNeeded()
+        fetchAll(force: true)
+        timer = Timer.scheduledTimer(withTimeInterval: currentTimerInterval, repeats: true) { [weak self] _ in
+            self?.tick()
         }
     }
 
@@ -69,169 +553,1023 @@ class StockTickerWidget: BaristaWidget {
         timer = nil
     }
 
-    func render() -> WidgetDisplayMode {
-        guard !quotes.isEmpty else {
-            return .text(lastFetchFailed ? "Stocks: Offline" : "Loading...")
+    private func tick() {
+        // Self-correcting timer: if refresh rate changed, rebuild the timer
+        let interval = effectiveRefreshInterval
+        if currentTimerInterval != interval {
+            timer?.invalidate()
+            timer = nil
+            currentTimerInterval = interval
+            timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+                self?.tick()
+            }
         }
+        fetchAll()
+    }
 
-        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        let separator = "    "
+    func saveConfig() {
+        NotificationCenter.default.post(name: .baristaWidgetConfigChanged, object: self)
+    }
+
+    // MARK: - Rendering
+
+    func render() -> WidgetDisplayMode {
+        switch config.displayMode {
+        case .scrolling:  return renderScrolling()
+        case .focused:    return renderFocused()
+        case .compact:    return renderCompact()
+        case .sparkline:  return renderSparkline()
+        case .portfolio:  return renderPortfolio()
+        }
+    }
+
+    private func renderScrolling() -> WidgetDisplayMode {
+        guard !quotes.isEmpty else {
+            return .text(lastFetchFailed ? "Market: Offline" : "Loading...")
+        }
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium)
+        let sepFont = NSFont.systemFont(ofSize: 9, weight: .light)
+        let sep = "  \u{00B7}  "
+        let sorted = sortedQuotes()
 
         if config.coloredTicker {
-            let result = NSMutableAttributedString()
-            for (i, q) in quotes.enumerated() {
-                let arrow = q.isUp ? "\u{25B2}" : "\u{25BC}"
-                let text = String(format: "%@ $%.2f %@%.1f%%", q.symbol, q.price, arrow, abs(q.change))
-                let color = Theme.colorForChange(q.change)
-                result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color]))
-                if i < quotes.count - 1 {
-                    result.append(NSAttributedString(string: separator, attributes: [.font: font, .foregroundColor: NSColor.headerTextColor.withAlphaComponent(0.3)]))
+            let r = NSMutableAttributedString()
+            for (i, q) in sorted.enumerated() {
+                let session = q.extendedHours?.label
+                let sessionText = session.map { " \($0)" } ?? ""
+                let mainText = "\(q.symbol)\(sessionText) $\(formatPrice(q.currentPrice)) \(q.currentIsUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f%%", abs(q.currentChange)))"
+                r.append(NSAttributedString(string: mainText, attributes: [.font: font, .foregroundColor: intensityColor(for: q.currentChange)]))
+                if config.showExtendedHours, let ext = q.extendedHours, session != nil {
+                    let arrow = ext.change >= 0 ? "\u{25B2}" : "\u{25BC}"
+                    let extText = " close:\(arrow)\(String(format: "%.1f%%", abs(ext.change)))"
+                    let extColor = intensityColor(for: ext.change).withAlphaComponent(0.7)
+                    r.append(NSAttributedString(string: extText, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular), .foregroundColor: extColor]))
+                }
+                if i < sorted.count - 1 {
+                    r.append(NSAttributedString(string: sep, attributes: [.font: sepFont, .foregroundColor: NSColor.headerTextColor.withAlphaComponent(0.18)]))
                 }
             }
-            result.append(NSAttributedString(string: separator, attributes: [.font: font, .foregroundColor: NSColor.headerTextColor.withAlphaComponent(0.3)]))
-            return .scrollingText(result, width: CGFloat(config.tickerWidth))
+            r.append(NSAttributedString(string: "        ", attributes: [.font: sepFont, .foregroundColor: NSColor.clear]))
+            return .scrollingText(r, width: CGFloat(config.tickerWidth))
         } else {
-            let parts = quotes.map { q -> String in
-                let arrow = q.isUp ? "\u{25B2}" : "\u{25BC}"
-                return String(format: "%@ $%.2f %@%.1f%%", q.symbol, q.price, arrow, abs(q.change))
-            }
-            let text = parts.joined(separator: separator) + separator
-            let attr = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.headerTextColor])
-            return .scrollingText(attr, width: CGFloat(config.tickerWidth))
+            let text = sorted.map { formatTickerItem($0) }.joined(separator: sep) + "        "
+            return .scrollingText(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.headerTextColor]), width: CGFloat(config.tickerWidth))
         }
     }
+
+    private func renderFocused() -> WidgetDisplayMode {
+        let sorted = sortedQuotes()
+        guard !sorted.isEmpty else { return .text(lastFetchFailed ? "Market: Offline" : "Loading...") }
+        let q = sorted[focusedIndex % sorted.count]
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        let color = config.coloredTicker ? intensityColor(for: q.currentChange) : NSColor.headerTextColor
+        return .attributedText(NSAttributedString(string: formatTickerItem(q), attributes: [.font: font, .foregroundColor: color]))
+    }
+
+    private func renderCompact() -> WidgetDisplayMode {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let r = NSMutableAttributedString()
+        if let spy = indexQuotes.first(where: { $0.symbol == "SPY" }) {
+            let c = config.coloredTicker ? intensityColor(for: spy.currentChange) : NSColor.headerTextColor
+            let tag = (spy.extendedHours?.label).map { " \($0)" } ?? ""
+            r.append(NSAttributedString(string: "S&P\(tag) \(spy.currentIsUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f%%", abs(spy.currentChange)))", attributes: [.font: font, .foregroundColor: c]))
+        }
+        if let btc = quotes.first(where: { $0.symbol == "BTC" }) {
+            if r.length > 0 { r.append(NSAttributedString(string: " | ", attributes: [.font: font, .foregroundColor: NSColor.headerTextColor.withAlphaComponent(0.3)])) }
+            let c = config.coloredTicker ? intensityColor(for: btc.change) : NSColor.headerTextColor
+            r.append(NSAttributedString(string: "BTC \(btc.isUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f%%", abs(btc.change)))", attributes: [.font: font, .foregroundColor: c]))
+        }
+        return r.length > 0 ? .attributedText(r) : .text(lastFetchFailed ? "Market: Offline" : "Loading...")
+    }
+
+    private func renderSparkline() -> WidgetDisplayMode {
+        let sorted = sortedQuotes()
+        guard !sorted.isEmpty else { return .text(lastFetchFailed ? "Market: Offline" : "Loading...") }
+        let q = sorted[focusedIndex % sorted.count]
+        let chartData = q.chartSeries
+        guard chartData.count >= 2 else {
+            return renderFocused()
+        }
+        let label = "\(q.symbol) \(q.currentIsUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f%%", abs(q.currentChange)))"
+        return .sparkline(chartData, label: label, width: CGFloat(config.tickerWidth))
+    }
+
+    private func renderPortfolio() -> WidgetDisplayMode {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
+        if let pv = portfolioSnapshot() {
+            let totalStr = formatCurrency(pv.total)
+            let plStr = String(format: " %@ (%@%.1f%%)", formatSignedCurrency(pv.dailyPL), pv.dailyPercent >= 0 ? "+" : "", pv.dailyPercent)
+            let r = NSMutableAttributedString()
+            r.append(NSAttributedString(string: totalStr, attributes: [.font: font, .foregroundColor: Theme.textPrimary]))
+            let plColor = intensityColor(for: pv.dailyPercent)
+            r.append(NSAttributedString(string: plStr, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: plColor]))
+            return .attributedText(r)
+        }
+        // No holdings - fall back to compact
+        return renderCompact()
+    }
+
+    func intensityColor(for change: Double) -> NSColor {
+        if case .fixed = config.colorMode { return config.accentColor.color }
+        let a = Swift.abs(change)
+        let alpha: CGFloat = min(0.6 + a * 0.08, 1.0)
+        if change >= 0 {
+            if a < 0.5 { return NSColor(red: 0.45, green: 0.72, blue: 0.55, alpha: alpha) }
+            if a < 2.0 { return NSColor(red: 0.25, green: 0.82, blue: 0.50, alpha: alpha) }
+            if a < 5.0 { return NSColor(red: 0.18, green: 0.90, blue: 0.50, alpha: alpha) }
+            return NSColor(red: 0.10, green: 0.98, blue: 0.45, alpha: alpha)
+        } else {
+            if a < 0.5 { return NSColor(red: 0.75, green: 0.48, blue: 0.45, alpha: alpha) }
+            if a < 2.0 { return NSColor(red: 0.90, green: 0.38, blue: 0.35, alpha: alpha) }
+            if a < 5.0 { return NSColor(red: 0.98, green: 0.28, blue: 0.28, alpha: alpha) }
+            return NSColor(red: 1.0, green: 0.18, blue: 0.18, alpha: alpha)
+        }
+    }
+
+    func chartQuoteForCurrentFocus() -> MarketQuote? {
+        let sorted = sortedQuotes()
+        guard !sorted.isEmpty else { return nil }
+        return sorted[focusedIndex % sorted.count]
+    }
+
+    func chartStyle(for quote: MarketQuote, height: CGFloat, pointRadius: CGFloat, showGrid: Bool) -> SparklineRenderer.Style {
+        let color = config.coloredTicker ? intensityColor(for: quote.chartChange) : config.accentColor.color
+        return SparklineRenderer.Style(
+            lineColor: color,
+            fillColor: color.withAlphaComponent(showGrid ? 0.08 : 0.04),
+            lineWidth: showGrid ? 1.35 : 1.25,
+            height: height,
+            pointRadius: pointRadius,
+            baselineValue: quote.chartBaseline,
+            positiveColor: intensityColor(for: abs(quote.chartChange)),
+            negativeColor: intensityColor(for: -abs(quote.chartChange)),
+            neutralColor: Theme.textMuted,
+            baselineColor: Theme.textGhost.withAlphaComponent(showGrid ? 0.32 : 0.16),
+            gridColor: Theme.divider.withAlphaComponent(showGrid ? 0.45 : 0.0),
+            showGrid: showGrid,
+            smooth: false,
+            glow: false,
+            endPointColor: color
+        )
+    }
+
+    private func formatTickerItem(_ q: MarketQuote) -> String {
+        let sessionText = (q.extendedHours?.label).map { " \($0)" } ?? ""
+        var s = "\(q.symbol)\(sessionText) $\(formatPrice(q.currentPrice)) \(q.currentIsUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.1f%%", abs(q.currentChange)))"
+        if config.showExtendedHours, let ext = q.extendedHours {
+            let arrow = ext.change >= 0 ? "\u{25B2}" : "\u{25BC}"
+            s += " close:\(arrow)\(String(format: "%.1f%%", abs(ext.change)))"
+        }
+        return s
+    }
+
+    // MARK: - Sorting
+
+    func sortedQuotes() -> [MarketQuote] {
+        let stocks = quotes.filter { $0.kind == .stock }
+        let crypto = quotes.filter { $0.kind == .crypto }
+
+        let sortedStocks: [MarketQuote]
+        let sortedCrypto: [MarketQuote]
+
+        switch config.sortMode {
+        case .manual:
+            sortedStocks = stocks.sorted { a, b in
+                (config.symbols.firstIndex(of: a.symbol) ?? 999) < (config.symbols.firstIndex(of: b.symbol) ?? 999)
+            }
+            sortedCrypto = crypto.sorted { a, b in
+                let ai = config.coins.firstIndex(where: { (coinSymbols[$0] ?? $0.uppercased()) == a.symbol }) ?? 999
+                let bi = config.coins.firstIndex(where: { (coinSymbols[$0] ?? $0.uppercased()) == b.symbol }) ?? 999
+                return ai < bi
+            }
+        case .alphabetical:
+            sortedStocks = stocks.sorted { $0.symbol < $1.symbol }
+            sortedCrypto = crypto.sorted { $0.symbol < $1.symbol }
+        case .changeDesc:
+            sortedStocks = stocks.sorted { $0.currentChange > $1.currentChange }
+            sortedCrypto = crypto.sorted { $0.currentChange > $1.currentChange }
+        case .changeAsc:
+            sortedStocks = stocks.sorted { $0.currentChange < $1.currentChange }
+            sortedCrypto = crypto.sorted { $0.currentChange < $1.currentChange }
+        case .priceDesc:
+            sortedStocks = stocks.sorted { $0.currentPrice > $1.currentPrice }
+            sortedCrypto = crypto.sorted { $0.currentPrice > $1.currentPrice }
+        }
+        return sortedStocks + sortedCrypto
+    }
+
+    // MARK: - Fallback menu
 
     func buildDropdownMenu() -> NSMenu {
-        let menu = NSMenu()
-        let white = NSColor.white
-        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
-        let headerFont = NSFont.systemFont(ofSize: 11, weight: .bold)
-
-        // Header
-        let header = NSMenuItem(title: "", action: #selector(StockTickerWidget.noop), keyEquivalent: "")
-        header.target = self
-        header.attributedTitle = NSAttributedString(string: "WATCHLIST", attributes: [.font: headerFont, .foregroundColor: white.withAlphaComponent(0.5)])
-        menu.addItem(header)
-        menu.addItem(NSMenuItem.separator())
-
-        // Stock items
-        for q in quotes {
-            let arrow = q.isUp ? "\u{25B2}" : "\u{25BC}"
-            let color = Theme.colorForChange(q.change)
-            let text = NSMutableAttributedString()
-            text.append(NSAttributedString(string: "\(q.symbol)", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold), .foregroundColor: white]))
-            text.append(NSAttributedString(string: String(format: "    $%.2f    ", q.price), attributes: [.font: font, .foregroundColor: white]))
-            text.append(NSAttributedString(string: String(format: "%@%.2f%%", arrow, abs(q.change)), attributes: [.font: font, .foregroundColor: color]))
-            let item = NSMenuItem(title: "", action: #selector(StockTickerWidget.noop), keyEquivalent: "")
-            item.target = self
-            item.attributedTitle = text
-            menu.addItem(item)
-        }
-
-        if quotes.isEmpty {
-            let item = NSMenuItem(title: "", action: #selector(StockTickerWidget.noop), keyEquivalent: "")
-            item.target = self
-            item.attributedTitle = NSAttributedString(string: "Loading...", attributes: [.font: font, .foregroundColor: white])
-            menu.addItem(item)
-        }
-
-        menu.addItem(NSMenuItem.separator())
-
-        // Average
-        if !quotes.isEmpty {
-            let avg = quotes.map(\.change).reduce(0, +) / Double(quotes.count)
-            let avgColor = Theme.colorForChange(avg)
-            let avgText = NSMutableAttributedString()
-            avgText.append(NSAttributedString(string: "Avg: ", attributes: [.font: font, .foregroundColor: white]))
-            avgText.append(NSAttributedString(string: String(format: "%@%.2f%%", avg >= 0 ? "+" : "", avg), attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .bold), .foregroundColor: avgColor]))
-            let avgItem = NSMenuItem(title: "", action: #selector(StockTickerWidget.noop), keyEquivalent: "")
-            avgItem.target = self
-            avgItem.attributedTitle = avgText
-            menu.addItem(avgItem)
-            menu.addItem(NSMenuItem.separator())
-        }
-
-        let settingsItem = NSMenuItem(title: "Customize...", action: #selector(AppDelegate.showSettingsWindow), keyEquivalent: ",")
-        menu.addItem(settingsItem)
-
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit Barista", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        return menu
+        let m = NSMenu()
+        m.addItem(NSMenuItem(title: "Customize...", action: #selector(AppDelegate.showSettingsWindow), keyEquivalent: ","))
+        m.addItem(NSMenuItem.separator())
+        m.addItem(NSMenuItem(title: "Quit Barista", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        return m
     }
 
-    func buildConfigControls(onChange: @escaping () -> Void) -> [NSView] {
-        // Will be built out in the settings phase
+    func buildConfigControls(onChange: @escaping () -> Void) -> [NSView] { [] }
+    @objc func noop() {}
+
+    // MARK: - Last Good Data Cache
+
+    private func loadCachedQuotesIfNeeded() {
+        guard quotes.isEmpty,
+              let data = UserDefaults.standard.data(forKey: Self.quoteCacheKey),
+              let payload = try? JSONDecoder().decode(QuoteCachePayload.self, from: data)
+        else { return }
+
+        let wantedStocks = Set(config.symbols)
+        let wantedCrypto = Set(config.coins.map { coinSymbols[$0] ?? String($0.prefix(4)).uppercased() })
+        let cachedQuotes = payload.quotes.filter { quote in
+            switch quote.kind {
+            case .stock: return wantedStocks.contains(quote.symbol)
+            case .crypto: return wantedCrypto.contains(quote.symbol)
+            }
+        }
+        guard !cachedQuotes.isEmpty || !payload.indexQuotes.isEmpty else { return }
+
+        quotes = cachedQuotes
+        indexQuotes = payload.indexQuotes.filter { Self.indexSymbols.contains($0.symbol) }
+        for quote in quotes + indexQuotes {
+            previousPrices[quote.symbol] = quote.price
+        }
+        lastUpdated = payload.lastUpdated
+        isUsingCachedData = true
+        onDisplayUpdate?()
+        onDataRefresh?()
+    }
+
+    private func saveQuoteCache() {
+        guard !quotes.isEmpty || !indexQuotes.isEmpty else { return }
+        let payload = QuoteCachePayload(
+            quotes: quotes,
+            indexQuotes: indexQuotes,
+            lastUpdated: lastUpdated ?? Date()
+        )
+        if let data = try? JSONEncoder().encode(payload) {
+            UserDefaults.standard.set(data, forKey: Self.quoteCacheKey)
+        }
+    }
+
+    // MARK: - JSON Market Parsing
+
+    private func marketDouble(_ value: Any?) -> Double? {
+        switch value {
+        case let value as Double:
+            return value.isFinite ? value : nil
+        case let value as Float:
+            let d = Double(value)
+            return d.isFinite ? d : nil
+        case let value as Int:
+            return Double(value)
+        case let value as NSNumber:
+            let d = value.doubleValue
+            return d.isFinite ? d : nil
+        case let value as String:
+            guard let d = Double(value), d.isFinite else { return nil }
+            return d
+        default:
+            return nil
+        }
+    }
+
+    private func marketInt(_ value: Any?) -> Int? {
+        switch value {
+        case let value as Int:
+            return value
+        case let value as NSNumber:
+            return value.intValue
+        case let value as String:
+            return Int(value)
+        default:
+            return nil
+        }
+    }
+
+    private func marketSeries(_ value: Any?) -> [Double?] {
+        if let arr = value as? [Any] {
+            return arr.map { marketDouble($0) }
+        }
+        if let arr = value as? [Double] {
+            return arr.map(Optional.some)
+        }
         return []
+    }
+
+    private func compact(_ series: [Double?]) -> [Double] {
+        series.compactMap { $0 }
+    }
+
+    private func lastClose(timestamps: [Int], closes: [Double?], where predicate: (Int) -> Bool) -> Double? {
+        guard !timestamps.isEmpty, !closes.isEmpty else { return nil }
+        var result: Double?
+        for (i, ts) in timestamps.enumerated() where predicate(ts) {
+            if i < closes.count, let close = closes[i] {
+                result = close
+            }
+        }
+        return result
+    }
+
+    private func percentChange(from baseline: Double, to current: Double) -> Double {
+        guard baseline > 0 else { return 0 }
+        return (current - baseline) / baseline * 100
     }
 
     // MARK: - Fetching
 
-    private func fetchAll() {
-        for symbol in config.symbols {
-            fetchSingle(symbol: symbol)
-        }
+    private func fetchAll(force: Bool = false) {
+        for s in config.symbols { fetchStock(symbol: s, force: force) }
+        for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
+        if !config.coins.isEmpty { fetchCrypto(force: force) }
     }
 
-    private func fetchSingle(symbol: String) {
-        let safeSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
-        let urlStr = "https://query1.finance.yahoo.com/v8/finance/chart/\(safeSymbol)?interval=1d&range=1d"
-        guard let url = URL(string: urlStr) else { return }
-
-        DataFetcher.shared.fetch(url: url, maxAge: max(config.refreshInterval * 0.8, 10)) { [weak self] result in
+    private func fetchStock(symbol: String, force: Bool = false) {
+        let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
+        guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
             guard let self = self else { return }
-            switch result {
-            case .success(let data):
+            if case .success(let data) = result {
                 self.lastFetchFailed = false
-                self.parseQuote(data: data, symbol: symbol)
-            case .failure:
+                self.parseStock(data: data, symbol: symbol, isIndex: false)
+            } else {
                 DispatchQueue.main.async {
+                    self.failedSymbols.insert(symbol)
                     self.lastFetchFailed = true
-                    if self.quotes.isEmpty { self.onDisplayUpdate?() }
+                    self.onDisplayUpdate?()
+                    self.onDataRefresh?()
                 }
             }
         }
     }
 
-    private func parseQuote(data: Data, symbol: String) {
-        do {
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let chart = json["chart"] as? [String: Any],
-               let results = chart["result"] as? [[String: Any]],
-               let meta = results.first?["meta"] as? [String: Any],
-               let price = meta["regularMarketPrice"] as? Double,
-               let prev = meta["chartPreviousClose"] as? Double {
-                let pct = prev > 0 ? (price - prev) / prev * 100 : 0
-                let quote = StockQuote(symbol: symbol, price: price, change: pct)
-                DispatchQueue.main.async {
-                    if let idx = self.quotes.firstIndex(where: { $0.symbol == symbol }) {
-                        self.quotes[idx] = quote
-                    } else {
-                        self.quotes.append(quote)
-                        self.quotes.sort { a, b in
-                            (self.config.symbols.firstIndex(of: a.symbol) ?? 0) < (self.config.symbols.firstIndex(of: b.symbol) ?? 0)
-                        }
-                    }
-                    self.onDisplayUpdate?()
-                }
-            }
-        } catch {}
+    private func fetchIndex(symbol: String, force: Bool = false) {
+        let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
+        guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
+            guard let self = self, case .success(let data) = result else { return }
+            self.parseStock(data: data, symbol: symbol, isIndex: true)
+        }
     }
 
-    @objc func noop() {}
+    private func parseStock(data: Data, symbol: String, isIndex: Bool) {
+        do {
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let chart = json["chart"] as? [String: Any],
+                  let results = chart["result"] as? [[String: Any]],
+                  let first = results.first,
+                  let meta = first["meta"] as? [String: Any] else {
+                DispatchQueue.main.async {
+                    self.failedSymbols.insert(symbol)
+                    self.lastFetchFailed = true
+                    self.onDataRefresh?()
+                }
+                return
+            }
+
+            var dayHigh: Double?, dayLow: Double?, volume: Double?, sparkline: [Double] = []
+            let timestamps = (first["timestamp"] as? [Any])?.compactMap { marketInt($0) } ?? []
+
+            var preStart: Int = 0, preEnd: Int = 0
+            var regularStart: Int = 0, regularEnd: Int = 0
+            var postStart: Int = 0, postEnd: Int = 0
+            if let ctp = meta["currentTradingPeriod"] as? [String: Any],
+               let pre = ctp["pre"] as? [String: Any],
+               let reg = ctp["regular"] as? [String: Any],
+               let post = ctp["post"] as? [String: Any] {
+                preStart = marketInt(pre["start"]) ?? 0
+                preEnd = marketInt(pre["end"]) ?? 0
+                regularStart = marketInt(reg["start"]) ?? 0
+                regularEnd = marketInt(reg["end"]) ?? 0
+                postStart = marketInt(post["start"]) ?? 0
+                postEnd = marketInt(post["end"]) ?? 0
+            } else if let ctp = meta["currentTradingPeriod"] as? [String: Any],
+                      let reg = ctp["regular"] as? [String: Any] {
+                regularStart = marketInt(reg["start"]) ?? 0
+                regularEnd = marketInt(reg["end"]) ?? 0
+            }
+
+            let previousClose = marketDouble(meta["chartPreviousClose"])
+                ?? marketDouble(meta["previousClose"])
+                ?? marketDouble(meta["regularMarketPreviousClose"])
+            guard let prev = previousClose else {
+                DispatchQueue.main.async {
+                    self.failedSymbols.insert(symbol)
+                    self.lastFetchFailed = true
+                    self.onDataRefresh?()
+                }
+                return
+            }
+
+            let marketCap = marketDouble(meta["marketCap"])
+            let fiftyTwoHigh = marketDouble(meta["fiftyTwoWeekHigh"])
+            let fiftyTwoLow = marketDouble(meta["fiftyTwoWeekLow"])
+            let regularDayHigh = marketDouble(meta["regularMarketDayHigh"])
+            let regularDayLow = marketDouble(meta["regularMarketDayLow"])
+            let openPrice = marketDouble(meta["regularMarketOpen"]) ?? prev
+            let peRatio = marketDouble(meta["trailingPE"]) ?? marketDouble(meta["forwardPE"]) ?? marketDouble(meta["peRatio"])
+            let marketState = (meta["marketState"] as? String)?.uppercased()
+            let quoteStatus = MarketStatus.fromYahooMarketState(marketState) ?? MarketStatus.current()
+
+            var allCloses: [Double?] = []
+            if let ind = first["indicators"] as? [String: Any],
+               let qa = ind["quote"] as? [[String: Any]], let qd = qa.first {
+                allCloses = marketSeries(qd["close"])
+                sparkline = compact(allCloses)
+                let highs = compact(marketSeries(qd["high"]))
+                let lows = compact(marketSeries(qd["low"]))
+                let vols = compact(marketSeries(qd["volume"]))
+                if !highs.isEmpty { dayHigh = highs.max() }
+                if !lows.isEmpty { dayLow = lows.min() }
+                if !vols.isEmpty { volume = vols.reduce(0, +) }
+            }
+            if let rdh = regularDayHigh { dayHigh = rdh }
+            if let rdl = regularDayLow { dayLow = rdl }
+
+            let regularFromSeries = lastClose(timestamps: timestamps, closes: allCloses) { ts in
+                regularStart > 0 && regularEnd > 0 && ts >= regularStart && ts < regularEnd
+            }
+            let rawRegularPrice = marketDouble(meta["regularMarketPrice"])
+
+            sparkline = sampleSparkline(sparkline, count: 48)
+
+            // Extended hours
+            var prePrice: Double?, preChgPct: Double?
+            var postPrice: Double?, postChgPct: Double?
+
+            let preFromMeta = marketDouble(meta["preMarketPrice"])
+            let preFromSeries = lastClose(timestamps: timestamps, closes: allCloses) { ts in
+                if preStart > 0 && preEnd > 0 { return ts >= preStart && ts < preEnd }
+                return regularStart > 0 && ts < regularStart
+            }
+            let preFromRegularMeta: Double?
+            if quoteStatus == .preMarket, let rawRegularPrice, abs(rawRegularPrice - prev) > 0.000001 {
+                preFromRegularMeta = rawRegularPrice
+            } else {
+                preFromRegularMeta = nil
+            }
+            let selectedPrePrice = quoteStatus == .preMarket ? (preFromSeries ?? preFromMeta ?? preFromRegularMeta) : (preFromMeta ?? preFromSeries)
+            if let pp = selectedPrePrice {
+                prePrice = pp
+                preChgPct = percentChange(from: prev, to: pp)
+            }
+
+            let price: Double
+            if case .preMarket = quoteStatus, prePrice != nil {
+                price = regularFromSeries ?? prev
+            } else {
+                price = regularFromSeries ?? rawRegularPrice ?? prev
+            }
+            let pct = percentChange(from: prev, to: price)
+
+            let postFromMeta = marketDouble(meta["postMarketPrice"])
+            let postFromSeries = lastClose(timestamps: timestamps, closes: allCloses) { ts in
+                if postStart > 0 && postEnd > 0 { return ts >= postStart && ts < postEnd }
+                return regularEnd > 0 && ts >= regularEnd
+            }
+            let selectedPostPrice = quoteStatus == .afterHours ? (postFromSeries ?? postFromMeta) : (postFromMeta ?? postFromSeries)
+            if let pp = selectedPostPrice {
+                postPrice = pp
+                postChgPct = percentChange(from: price, to: pp)
+            }
+
+            let displayTail: Double
+            switch quoteStatus {
+            case .preMarket:
+                displayTail = prePrice ?? price
+            case .afterHours:
+                displayTail = postPrice ?? price
+            case .open, .closed:
+                displayTail = price
+            }
+            if sparkline.isEmpty { sparkline = [prev, displayTail] }
+            if !sparkline.isEmpty { sparkline[sparkline.count - 1] = displayTail }
+
+            let q = MarketQuote(symbol: symbol, price: price, change: pct, kind: .stock,
+                                previousClose: prev, dayHigh: dayHigh, dayLow: dayLow, volume: volume, sparkline: sparkline,
+                                marketCap: marketCap, fiftyTwoWeekHigh: fiftyTwoHigh,
+                                fiftyTwoWeekLow: fiftyTwoLow, openPrice: openPrice, peRatio: peRatio,
+                                preMarketPrice: prePrice, preMarketChange: preChgPct,
+                                postMarketPrice: postPrice, postMarketChange: postChgPct,
+                                marketState: marketState)
+            DispatchQueue.main.async {
+                self.failedSymbols.remove(symbol)
+                self.lastFetchFailed = false
+                self.isUsingCachedData = false
+                self.checkPriceAlert(symbol: symbol, newPrice: q.currentPrice)
+                if isIndex {
+                    self.indexQuotes.removeAll { $0.symbol == symbol }
+                    self.indexQuotes.append(q)
+                    if self.config.symbols.contains(symbol) {
+                        self.quotes.removeAll { $0.symbol == symbol && $0.kind == .stock }
+                        self.quotes.append(q)
+                    }
+                } else {
+                    self.quotes.removeAll { $0.symbol == symbol && $0.kind == .stock }
+                    self.quotes.append(q)
+                    if Self.indexSymbols.contains(symbol) {
+                        self.indexQuotes.removeAll { $0.symbol == symbol }
+                        self.indexQuotes.append(q)
+                    }
+                }
+                self.previousPrices[symbol] = q.currentPrice
+                self.lastUpdated = Date()
+                self.saveQuoteCache()
+                self.onDisplayUpdate?()
+                self.onDataRefresh?()
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.failedSymbols.insert(symbol)
+                self.lastFetchFailed = true
+                self.onDataRefresh?()
+            }
+        }
+    }
+
+    private func fetchCrypto(force: Bool = false) {
+        let ids = config.coins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(string: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=\(config.cryptoCurrency)&ids=\(ids)&sparkline=true&price_change_percentage=24h") else { return }
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : cryptoCacheAge) { [weak self] result in
+            guard let self = self, case .success(let data) = result else {
+                if case .failure = result {
+                    DispatchQueue.main.async {
+                        self?.lastFetchFailed = true
+                        self?.onDataRefresh?()
+                        if self?.quotes.isEmpty == true { self?.onDisplayUpdate?() }
+                    }
+                }
+                return
+            }
+            self.lastFetchFailed = false
+            self.parseCrypto(data: data)
+        }
+    }
+
+    private func parseCrypto(data: Data) {
+        do {
+            guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+            var results: [MarketQuote] = []
+            for cd in arr {
+                guard let coinId = cd["id"] as? String else { continue }
+                let sym = coinSymbols[coinId] ?? String(coinId.prefix(4)).uppercased()
+                let currentPrice = cd["current_price"] as? Double ?? 0
+                var sparkline: [Double] = []
+                if let so = cd["sparkline_in_7d"] as? [String: Any], let p = so["price"] as? [Double] {
+                    sparkline = sampleSparkline(p, count: 48)
+                }
+                if !sparkline.isEmpty, currentPrice > 0 {
+                    sparkline[sparkline.count - 1] = currentPrice
+                }
+                results.append(MarketQuote(symbol: sym, price: currentPrice,
+                    change: cd["price_change_percentage_24h"] as? Double ?? 0, kind: .crypto,
+                    dayHigh: cd["high_24h"] as? Double, dayLow: cd["low_24h"] as? Double,
+                    volume: cd["total_volume"] as? Double, sparkline: sparkline,
+                    marketCap: cd["market_cap"] as? Double))
+            }
+            DispatchQueue.main.async {
+                for q in results { self.checkPriceAlert(symbol: q.symbol, newPrice: q.price) }
+                self.lastFetchFailed = false
+                self.isUsingCachedData = false
+                self.quotes.removeAll { $0.kind == .crypto }
+                self.quotes.append(contentsOf: results)
+                for q in results { self.previousPrices[q.symbol] = q.price }
+                self.lastUpdated = Date()
+                self.saveQuoteCache()
+                self.onDisplayUpdate?()
+                self.onDataRefresh?()
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.lastFetchFailed = true
+                self.onDataRefresh?()
+            }
+        }
+    }
+
+    private func sampleSparkline(_ data: [Double], count: Int) -> [Double] {
+        guard data.count > count else { return data }
+        let step = Double(data.count - 1) / Double(count - 1)
+        return (0..<count).map { data[min(Int(Double($0) * step), data.count - 1)] }
+    }
+
+    // MARK: - Price Alerts
+
+    private func checkPriceAlert(symbol: String, newPrice: Double) {
+        guard let target = config.priceAlerts[symbol] else { return }
+        guard let oldPrice = previousPrices[symbol] else { return }
+        let crossedAbove = oldPrice < target && newPrice >= target
+        let crossedBelow = oldPrice > target && newPrice <= target
+        guard crossedAbove || crossedBelow else { return }
+
+        let direction = crossedAbove ? "above" : "below"
+        let content = UNMutableNotificationContent()
+        content.title = "\(symbol) Price Alert"
+        content.body = "\(symbol) is now $\(formatPrice(newPrice)) - crossed \(direction) $\(formatPrice(target))"
+        content.sound = .default
+
+        let req = UNNotificationRequest(identifier: "barista.alert.\(symbol).\(Int(Date().timeIntervalSince1970))",
+                                         content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(req)
+
+        config.priceAlerts.removeValue(forKey: symbol)
+        saveConfig()
+    }
 
     // MARK: - Symbol Management
 
-    func addSymbol(_ symbol: String) {
-        let sym = symbol.uppercased().trimmingCharacters(in: .whitespaces)
-        guard !sym.isEmpty, !config.symbols.contains(sym) else { return }
-        config.symbols.append(sym)
-        fetchSingle(symbol: sym)
+    func addSymbol(_ input: String) {
+        let rawTokens = input
+            .split { $0 == "," || $0 == " " || $0 == "\n" || $0 == "\t" || $0 == ";" }
+            .map(String.init)
+        if rawTokens.count > 1 {
+            rawTokens.forEach { addSymbol($0) }
+            return
+        }
+
+        let trimmed = input
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "$"))
+        let upper = trimmed.uppercased()
+        if let coinID = symbolToCoinID[upper] { addCoin(coinID); return }
+        if coinSymbols[trimmed.lowercased()] != nil { addCoin(trimmed.lowercased()); return }
+        guard !upper.isEmpty, upper.range(of: #"^[A-Z0-9.\-=^]{1,16}$"#, options: .regularExpression) != nil else { return }
+        guard !config.symbols.contains(upper) else { return }
+        config.symbols.append(upper)
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+        fetchStock(symbol: upper, force: true)
     }
 
-    func removeSymbol(_ symbol: String) {
-        config.symbols.removeAll { $0 == symbol }
-        quotes.removeAll { $0.symbol == symbol }
-        DispatchQueue.main.async { self.onDisplayUpdate?() }
+    func addCoin(_ coinId: String) {
+        let coin = coinId.lowercased()
+        guard !coin.isEmpty, !config.coins.contains(coin) else { return }
+        config.coins.append(coin)
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+        fetchCrypto(force: true)
     }
+
+    func removeQuote(_ symbol: String, kind: MarketQuote.Kind) {
+        if kind == .stock {
+            config.symbols.removeAll { $0 == symbol }
+            config.holdings.removeValue(forKey: symbol)
+            config.priceAlerts.removeValue(forKey: symbol)
+            quotes.removeAll { $0.symbol == symbol && $0.kind == .stock }
+            failedSymbols.remove(symbol)
+        } else {
+            let coinId = symbolToCoinID[symbol] ?? symbol.lowercased()
+            config.coins.removeAll { $0 == coinId || (coinSymbols[$0] ?? "") == symbol }
+            config.holdings.removeValue(forKey: symbol)
+            config.priceAlerts.removeValue(forKey: symbol)
+            quotes.removeAll { $0.symbol == symbol && $0.kind == .crypto }
+        }
+        saveConfig()
+        DispatchQueue.main.async { self.onDisplayUpdate?(); self.onDataRefresh?() }
+    }
+
+    func setHolding(symbol: String, kind: MarketQuote.Kind, quantity rawQuantity: Double) {
+        let normalized = symbol.uppercased()
+        let quantity = rawQuantity.isFinite ? max(0, rawQuantity) : 0
+        if quantity > 0 {
+            config.holdings[normalized] = quantity
+            if kind == .stock, !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
+                config.symbols.append(normalized)
+            }
+        } else {
+            config.holdings.removeValue(forKey: normalized)
+        }
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+        if quantity > 0 {
+            refreshQuoteNow(symbol: normalized, kind: kind)
+        }
+    }
+
+    func setCash(_ rawAmount: Double) {
+        config.cash = rawAmount.isFinite ? max(0, rawAmount) : 0
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+    }
+
+    // MARK: - Portfolio Management
+
+    var activePortfolioName: String {
+        config.activePortfolio?.name ?? Portfolio.fallbackName
+    }
+
+    var canAddPortfolio: Bool {
+        config.portfolios.count < Portfolio.maxCount
+    }
+
+    private func portfoliosChanged() {
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+    }
+
+    func selectPortfolio(id: String) {
+        guard id != config.activePortfolioID,
+              config.portfolios.contains(where: { $0.id == id }) else { return }
+        config.activePortfolioID = id
+        portfoliosChanged()
+    }
+
+    /// Creates an empty portfolio and makes it active. Returns false at the cap.
+    @discardableResult
+    func addPortfolio(named rawName: String) -> Bool {
+        guard canAddPortfolio else { return false }
+        let created = Portfolio(name: Portfolio.sanitize(name: rawName))
+        config.portfolios.append(created)
+        config.activePortfolioID = created.id
+        portfoliosChanged()
+        return true
+    }
+
+    func renameActivePortfolio(to rawName: String) {
+        let idx = config.activePortfolioIndex
+        guard config.portfolios.indices.contains(idx) else { return }
+        config.portfolios[idx].name = Portfolio.sanitize(name: rawName)
+        portfoliosChanged()
+    }
+
+    /// Deletes a portfolio, selecting a neighbour if it was active.
+    /// The last remaining portfolio is never deleted.
+    @discardableResult
+    func deletePortfolio(id: String) -> Bool {
+        guard config.portfolios.count > 1,
+              let idx = config.portfolios.firstIndex(where: { $0.id == id }) else { return false }
+        let wasActive = config.activePortfolioID == id
+        config.portfolios.remove(at: idx)
+        if wasActive {
+            config.activePortfolioID = config.portfolios[max(0, idx - 1)].id
+        }
+        portfoliosChanged()
+        return true
+    }
+
+    private func refreshQuoteNow(symbol: String, kind: MarketQuote.Kind) {
+        switch kind {
+        case .stock:
+            fetchStock(symbol: symbol, force: true)
+        case .crypto:
+            fetchCrypto(force: true)
+        }
+    }
+
+    func refreshNow() {
+        onDisplayUpdate?()
+        onDataRefresh?()
+        fetchAll(force: true)
+    }
+
+    // MARK: - Portfolio
+
+    func portfolioSnapshot() -> PortfolioSnapshot? {
+        let cash = max(0, config.cash)
+        guard !config.holdings.isEmpty || cash > 0 else { return nil }
+        var positions: [PortfolioPosition] = []
+        var missing: [String] = []
+
+        for (sym, qty) in config.holdings.sorted(by: { $0.key < $1.key }) where qty > 0 {
+            if let q = portfolioQuote(for: sym) {
+                positions.append(PortfolioPosition(quote: q, quantity: qty))
+            } else {
+                missing.append(sym)
+            }
+        }
+
+        let positionsValue = positions.map(\.value).reduce(0, +)
+        let total = positionsValue + cash
+        let baselineTotal = positions.map(\.baselineValue).reduce(0, +) + cash
+        let dailyPL = positions.map(\.dailyPL).reduce(0, +)
+        guard total > 0 else { return nil }
+        return PortfolioSnapshot(positions: positions, missingSymbols: missing, cash: cash, total: total, baselineTotal: baselineTotal, dailyPL: dailyPL)
+    }
+
+    private func portfolioQuote(for symbol: String) -> MarketQuote? {
+        let normalized = symbol.uppercased()
+        if let quote = quotes.first(where: { $0.symbol.uppercased() == normalized }) {
+            return quote
+        }
+        return indexQuotes.first(where: { $0.symbol.uppercased() == normalized })
+    }
+
+    func portfolioValue() -> (total: Double, dailyPL: Double)? {
+        guard let snapshot = portfolioSnapshot() else { return nil }
+        return (snapshot.total, snapshot.dailyPL)
+    }
+
+    func portfolioChangePercent(total: Double, dailyPL: Double) -> Double {
+        let baseline = total - dailyPL
+        guard baseline > 0 else { return 0 }
+        return (dailyPL / baseline) * 100
+    }
+
+    func marketBreadth() -> MarketBreadth? {
+        let items = sortedQuotes()
+        guard !items.isEmpty else { return nil }
+        let advancing = items.filter { $0.currentChange > 0.05 }.count
+        let declining = items.filter { $0.currentChange < -0.05 }.count
+        let flat = items.count - advancing - declining
+        let average = items.map(\.currentChange).reduce(0, +) / Double(items.count)
+        return MarketBreadth(
+            advancing: advancing,
+            declining: declining,
+            flat: flat,
+            averageChange: average,
+            leader: items.max { $0.currentChange < $1.currentChange },
+            laggard: items.min { $0.currentChange < $1.currentChange }
+        )
+    }
+
+    func freshnessDescription(now: Date = Date()) -> String {
+        guard let lastUpdated else { return lastFetchFailed ? "Offline" : "Loading" }
+        let age = max(0, now.timeIntervalSince(lastUpdated))
+        let prefix = isUsingCachedData || lastFetchFailed ? "Cached" : "Updated"
+        if age < 60 { return "\(prefix) \(Int(age))s ago" }
+        if age < 3600 { return "\(prefix) \(Int(age / 60))m ago" }
+        return "\(prefix) \(Int(age / 3600))h ago"
+    }
+
+    func freshnessColor(now: Date = Date()) -> NSColor {
+        guard let lastUpdated else { return lastFetchFailed ? Theme.red : Theme.textGhost }
+        let age = now.timeIntervalSince(lastUpdated)
+        if lastFetchFailed || isUsingCachedData { return Theme.brandAmber }
+        if age > max(effectiveRefreshInterval * 4, 20) { return Theme.brandAmber }
+        return Theme.textGhost
+    }
+
+    // MARK: - Formatting
+
+    func formatPrice(_ price: Double) -> String {
+        if price >= 10000 {
+            let f = NumberFormatter(); f.numberStyle = .decimal; f.maximumFractionDigits = 0
+            return f.string(from: NSNumber(value: price)) ?? String(format: "%.0f", price)
+        }
+        if price >= 100 { return String(format: "%.1f", price) }
+        if price >= 1 { return String(format: "%.2f", price) }
+        if price >= 0.01 { return String(format: "%.4f", price) }
+        return String(format: "%.6f", price)
+    }
+
+    func formatCurrency(_ amount: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.minimumFractionDigits = 2
+        f.maximumFractionDigits = 2
+        return f.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
+    }
+
+    func formatSignedCurrency(_ amount: Double) -> String {
+        return "\(amount >= 0 ? "+" : "-")\(formatCurrency(abs(amount)))"
+    }
+
+    static func compactNumber(_ v: Double) -> String {
+        if v >= 1e12 { return String(format: "%.1fT", v / 1e12) }
+        if v >= 1e9 { return String(format: "%.1fB", v / 1e9) }
+        if v >= 1e6 { return String(format: "%.1fM", v / 1e6) }
+        if v >= 1e3 { return String(format: "%.1fK", v / 1e3) }
+        return String(format: "%.0f", v)
+    }
+
+    func openInBrowser(symbol: String, kind: MarketQuote.Kind) {
+        let urlStr: String
+        if kind == .crypto {
+            let coinId = symbolToCoinID[symbol] ?? symbol.lowercased()
+            urlStr = "https://www.coingecko.com/en/coins/\(coinId)"
+        } else {
+            urlStr = "https://finance.yahoo.com/quote/\(symbol)"
+        }
+        if let url = URL(string: urlStr) { NSWorkspace.shared.open(url) }
+    }
+}
+
+// MARK: - Cycleable
+
+extension StockTickerWidget: Cycleable {
+    var itemCount: Int {
+        let needsCycle = config.displayMode == .focused || config.displayMode == .sparkline
+        return needsCycle ? max(sortedQuotes().count, 1) : 1
+    }
+    var currentIndex: Int { focusedIndex }
+    var cycleInterval: TimeInterval {
+        let needsCycle = config.displayMode == .focused || config.displayMode == .sparkline
+        return needsCycle ? config.focusCycleSeconds : 0
+    }
+    func cycleNext() { let c = sortedQuotes().count; if c > 0 { focusedIndex = (focusedIndex + 1) % c } }
+}
+
+// MARK: - Interactive Dropdown
+
+extension StockTickerWidget: InteractiveDropdown {
+    var dropdownSize: NSSize { NSSize(width: 420, height: 560) }
+
+    func buildDropdownPopover() -> NSView {
+        let vc = MarketPopoverController(widget: self)
+        self.popoverVC = vc
+        return vc.buildView()
+    }
+}
+
+// MARK: - DeclarativeConfig
+
+extension StockTickerWidget: DeclarativeConfig {
+    func configFields() -> [ConfigField] {
+        [
+            .section(title: "Display"),
+            .picker(label: "Display Mode", key: "displayMode", options: [
+                (title: "Scrolling Ticker", value: "scrolling"),
+                (title: "Focused (one at a time)", value: "focused"),
+                (title: "Compact (S&P + BTC)", value: "compact"),
+                (title: "Sparkline Chart", value: "sparkline"),
+                (title: "Portfolio Value", value: "portfolio"),
+            ], get: { [weak self] in self?.config.displayMode.rawValue ?? "scrolling" },
+               set: { [weak self] in self?.config.displayMode = TickerDisplayMode(rawValue: $0) ?? .scrolling }),
+
+            .picker(label: "Color Mode", key: "colorMode", options: [
+                (title: "Dynamic (green/red intensity)", value: "dynamic"),
+                (title: "Fixed Accent Color", value: "fixed"),
+            ], get: { [weak self] in self?.config.colorMode.rawValue ?? "dynamic" },
+               set: { [weak self] in self?.config.colorMode = TickerColorMode(rawValue: $0) ?? .dynamic }),
+
+            .picker(label: "Accent Color", key: "accentColor", options: [
+                (title: "Blue", value: "blue"),
+                (title: "Cyan", value: "cyan"),
+                (title: "Green", value: "green"),
+                (title: "Amber", value: "amber"),
+                (title: "Purple", value: "purple"),
+                (title: "Red", value: "red"),
+                (title: "White", value: "white"),
+            ], get: { [weak self] in self?.config.accentColor.rawValue ?? "green" },
+               set: { [weak self] in self?.config.accentColor = TickerAccentPreset(rawValue: $0) ?? .green }),
+
+            .section(title: "Ticker Bar"),
+            .slider(label: "Ticker Width", key: "tickerWidth", min: 80, max: 500, step: 10,
+                    get: { [weak self] in self?.config.tickerWidth ?? 200 },
+                    set: { [weak self] in self?.config.tickerWidth = $0 },
+                    format: "%.0f px"),
+            .slider(label: "Scroll Speed", key: "scrollSpeed", min: 0.1, max: 2.0, step: 0.1,
+                    get: { [weak self] in self?.config.scrollSpeed ?? 0.3 },
+                    set: { [weak self] in self?.config.scrollSpeed = $0 },
+                    format: "%.1f x"),
+            .slider(label: "Focus Cycle", key: "focusCycleSeconds", min: 2, max: 15, step: 1,
+                    get: { [weak self] in self?.config.focusCycleSeconds ?? 5 },
+                    set: { [weak self] in self?.config.focusCycleSeconds = $0 },
+                    format: "%.0f s"),
+
+            .section(title: "Data"),
+            .toggle(label: "Show Volume", key: "showVolume",
+                    get: { [weak self] in self?.config.showVolume ?? true },
+                    set: { [weak self] in self?.config.showVolume = $0 }),
+            .toggle(label: "Show Market Cap", key: "showMarketCap",
+                    get: { [weak self] in self?.config.showMarketCap ?? true },
+                    set: { [weak self] in self?.config.showMarketCap = $0 }),
+            .toggle(label: "Show Day Range", key: "showDayRange",
+                    get: { [weak self] in self?.config.showDayRange ?? true },
+                    set: { [weak self] in self?.config.showDayRange = $0 }),
+            .toggle(label: "Show Sparkline Charts", key: "showSparklines",
+                    get: { [weak self] in self?.config.showSparklines ?? true },
+                    set: { [weak self] in self?.config.showSparklines = $0 }),
+            .toggle(label: "Show P/E Ratio", key: "showPERatio",
+                    get: { [weak self] in self?.config.showPERatio ?? false },
+                    set: { [weak self] in self?.config.showPERatio = $0 }),
+            .toggle(label: "Show Extended Hours", key: "showExtendedHours",
+                    get: { [weak self] in self?.config.showExtendedHours ?? true },
+                    set: { [weak self] in self?.config.showExtendedHours = $0 }),
+            .toggle(label: "Show Major Indices", key: "showIndices",
+                    get: { [weak self] in self?.config.showIndices ?? true },
+                    set: { [weak self] in self?.config.showIndices = $0 }),
+            .toggle(label: "Colored Ticker Text", key: "coloredTicker",
+                    get: { [weak self] in self?.config.coloredTicker ?? true },
+                    set: { [weak self] in self?.config.coloredTicker = $0 }),
+
+            .section(title: "Sorting"),
+            .picker(label: "Sort Order", key: "sortMode", options: [
+                (title: "Manual (watchlist order)", value: "manual"),
+                (title: "Alphabetical (A-Z)", value: "alphabetical"),
+                (title: "Best Performers First", value: "changeDesc"),
+                (title: "Worst Performers First", value: "changeAsc"),
+                (title: "Highest Price First", value: "priceDesc"),
+            ], get: { [weak self] in self?.config.sortMode.rawValue ?? "manual" },
+               set: { [weak self] in self?.config.sortMode = TickerSortMode(rawValue: $0) ?? .manual }),
+
+            .section(title: "Sampling"),
+            .slider(label: "Refresh Rate", key: "refreshInterval", min: 5, max: 60, step: 5,
+                    get: { [weak self] in self?.config.refreshInterval ?? 5 },
+                    set: { [weak self] in self?.config.refreshInterval = $0 },
+                    format: "%.0f s"),
+        ]
+    }
+}
+
+// MARK: - Shared Popover View
+
+class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
