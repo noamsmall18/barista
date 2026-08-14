@@ -116,6 +116,10 @@ struct PortfolioPosition {
     let quote: MarketQuote
     let quantity: Double
 
+    /// Average price paid per share. Nil when it has never been recorded,
+    /// which keeps total-return figures hidden rather than showing a fake gain.
+    var averageCost: Double? = nil
+
     var value: Double { quote.currentPrice * quantity }
     var baselinePrice: Double { quote.baselinePrice ?? quote.currentPrice }
     var baselineValue: Double { baselinePrice * quantity }
@@ -124,6 +128,24 @@ struct PortfolioPosition {
     var dailyPercent: Double {
         guard baselineValue > 0 else { return 0 }
         return dailyPL / baselineValue * 100
+    }
+
+    // MARK: - Total return
+
+    var costValue: Double? {
+        guard let averageCost, averageCost > 0 else { return nil }
+        return averageCost * quantity
+    }
+
+    /// Gain or loss since purchase, as opposed to since yesterday's close.
+    var totalPL: Double? {
+        guard let costValue else { return nil }
+        return value - costValue
+    }
+
+    var totalPercent: Double? {
+        guard let costValue, costValue > 0, let totalPL else { return nil }
+        return totalPL / costValue * 100
     }
 }
 
@@ -149,6 +171,43 @@ struct PortfolioSnapshot {
     func weight(of position: PortfolioPosition) -> Double {
         guard total > 0 else { return 0 }
         return position.value / total * 100
+    }
+
+    // MARK: - Total return
+
+    /// Only positions with a recorded cost count toward total return, so a
+    /// half-filled portfolio reports on the part it actually knows about.
+    var costedPositions: [PortfolioPosition] { positions.filter { $0.costValue != nil } }
+    var positionsMissingCost: [PortfolioPosition] { positions.filter { $0.costValue == nil } }
+
+    var totalCost: Double? {
+        let costed = costedPositions
+        guard !costed.isEmpty else { return nil }
+        return costed.compactMap(\.costValue).reduce(0, +)
+    }
+
+    /// Gain since purchase across every costed position. Cash is deliberately
+    /// excluded from both sides - it was never invested, so counting it would
+    /// dilute the percentage.
+    var totalPL: Double? {
+        let costed = costedPositions
+        guard !costed.isEmpty else { return nil }
+        return costed.map(\.value).reduce(0, +) - costed.compactMap(\.costValue).reduce(0, +)
+    }
+
+    var totalPercent: Double? {
+        guard let totalCost, totalCost > 0, let totalPL else { return nil }
+        return totalPL / totalCost * 100
+    }
+
+    /// True when some positions have a cost recorded and others do not, so the
+    /// UI can say the total return covers only part of the portfolio.
+    var hasPartialCostBasis: Bool {
+        !costedPositions.isEmpty && !positionsMissingCost.isEmpty
+    }
+
+    var bestTotalPosition: PortfolioPosition? {
+        costedPositions.max { ($0.totalPercent ?? 0) < ($1.totalPercent ?? 0) }
     }
 }
 
@@ -242,6 +301,12 @@ struct StockTickerConfig: Codable, Equatable {
         set { mutateActive { $0.cash = newValue } }
     }
 
+    /// Average cost per share for the active portfolio, keyed by symbol.
+    var costBasis: [String: Double] {
+        get { activePortfolio?.costBasis ?? [:] }
+        set { mutateActive { $0.costBasis = newValue } }
+    }
+
     // Display
     var displayMode: TickerDisplayMode
     var colorMode: TickerColorMode
@@ -274,6 +339,9 @@ struct StockTickerConfig: Codable, Equatable {
     // Alerts
     var priceAlerts: [String: Double]
 
+    /// Range shown by the portfolio history chart.
+    var historyRange: PortfolioHistoryService.Range = .month
+
     static let `default` = StockTickerConfig(
         symbols: ["AAPL", "MSFT", "SPY"],
         coins: ["bitcoin", "ethereum"],
@@ -305,6 +373,7 @@ struct StockTickerConfig: Codable, Equatable {
         case tickerWidth, cryptoCurrency, showVolume, showSparklines, showIndices, showExtendedHours
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
+        case historyRange
     }
 
     init(symbols: [String] = ["AAPL", "MSFT", "SPY"], coins: [String] = ["bitcoin", "ethereum"],
@@ -372,6 +441,7 @@ struct StockTickerConfig: Codable, Equatable {
         refreshInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? 5
         cryptoCurrency = try c.decodeIfPresent(String.self, forKey: .cryptoCurrency) ?? "usd"
         priceAlerts = try c.decodeIfPresent([String: Double].self, forKey: .priceAlerts) ?? [:]
+        historyRange = try c.decodeIfPresent(PortfolioHistoryService.Range.self, forKey: .historyRange) ?? .month
     }
 
     func encode(to encoder: Encoder) throws {
@@ -404,6 +474,7 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(refreshInterval, forKey: .refreshInterval)
         try c.encode(cryptoCurrency, forKey: .cryptoCurrency)
         try c.encode(priceAlerts, forKey: .priceAlerts)
+        try c.encode(historyRange, forKey: .historyRange)
     }
 }
 
@@ -522,8 +593,102 @@ class StockTickerWidget: BaristaWidget {
     private static let quoteCacheKey = "barista.stockTicker.lastGoodQuotes"
     static let turboRefreshInterval: TimeInterval = 5
 
-    private var effectiveRefreshInterval: TimeInterval {
+    /// The configured rate, before market hours or backoff are taken into account.
+    private var baseRefreshInterval: TimeInterval {
         max(2, min(config.refreshInterval, Self.turboRefreshInterval))
+    }
+
+    /// How often equities are worth re-fetching. Prices only move while the
+    /// exchange is open, so polling every few seconds overnight buys nothing and
+    /// is what gets the app throttled.
+    private var stockRefreshInterval: TimeInterval {
+        stockInterval(during: MarketStatus.current())
+    }
+
+    /// Takes the phase as an argument so the schedule can be checked for hours
+    /// other than the one the clock happens to be in.
+    func stockInterval(during status: MarketStatus) -> TimeInterval {
+        let base = baseRefreshInterval
+        switch status {
+        case .open:                   return base
+        case .preMarket, .afterHours: return max(base * 3, 15)
+        case .closed:                 return max(base * 12, 300)
+        }
+    }
+
+    /// Crypto trades around the clock, so it never gets the closed-market slowdown.
+    private var cryptoRefreshInterval: TimeInterval {
+        max(baseRefreshInterval, 10)
+    }
+
+    /// Timer cadence: the faster of the two, since each fetch decides for itself
+    /// whether it is actually due.
+    private var effectiveRefreshInterval: TimeInterval {
+        let candidates = config.coins.isEmpty
+            ? [stockRefreshInterval]
+            : [stockRefreshInterval, cryptoRefreshInterval]
+        return max(2, candidates.min() ?? baseRefreshInterval)
+    }
+
+    // MARK: - Throttling
+
+    /// Set when an endpoint answers 429. Fetches are skipped until it passes.
+    private var backoffUntil: Date?
+    private var consecutiveRateLimits = 0
+    private(set) var lastSuccessfulFetch: Date?
+    private(set) var rateLimitedHost: String?
+
+    var isBackingOff: Bool {
+        guard let backoffUntil else { return false }
+        return backoffUntil > Date()
+    }
+
+    /// Seconds until normal polling resumes, for the UI to display.
+    var backoffRemaining: TimeInterval {
+        guard let backoffUntil else { return 0 }
+        return max(0, backoffUntil.timeIntervalSinceNow)
+    }
+
+    /// How stale the newest quote is. Nil before the first successful fetch.
+    var dataAge: TimeInterval? {
+        lastSuccessfulFetch.map { Date().timeIntervalSince($0) }
+    }
+
+    /// True once data is older than several refresh cycles, so the UI can stop
+    /// presenting stale prices as if they were live.
+    var isDataStale: Bool {
+        guard let dataAge else { return false }
+        return dataAge > max(effectiveRefreshInterval * 4, 90)
+    }
+
+    private func noteFetchSuccess() {
+        consecutiveRateLimits = 0
+        backoffUntil = nil
+        rateLimitedHost = nil
+        lastSuccessfulFetch = Date()
+        recordPortfolioHistory()
+    }
+
+    /// Snapshots every portfolio's value, not just the active one, so switching
+    /// tabs doesn't leave the others with gaps.
+    private func recordPortfolioHistory() {
+        let saved = config.activePortfolioID
+        for portfolio in config.portfolios {
+            config.activePortfolioID = portfolio.id
+            if let snapshot = portfolioSnapshot() {
+                PortfolioHistoryService.shared.record(portfolioID: portfolio.id, value: snapshot.total)
+            }
+        }
+        config.activePortfolioID = saved
+    }
+
+    /// Doubles the wait each time an endpoint throttles us, capped at 10 minutes.
+    private func noteFetchFailure(_ error: Error) {
+        guard let http = error as? DataFetcher.HTTPError, http.isRateLimited else { return }
+        consecutiveRateLimits += 1
+        rateLimitedHost = http.host
+        let delay = min(30 * pow(2, Double(consecutiveRateLimits - 1)), 600)
+        backoffUntil = Date().addingTimeInterval(delay)
     }
 
     private var quoteCacheAge: TimeInterval {
@@ -543,6 +708,11 @@ class StockTickerWidget: BaristaWidget {
         currentTimerInterval = effectiveRefreshInterval
         loadCachedQuotesIfNeeded()
         fetchAll(force: true)
+        // Earnings dates change daily at most, and the service throttles itself.
+        EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
+            self?.onDisplayUpdate?()
+            self?.onDataRefresh?()
+        }
         timer = Timer.scheduledTimer(withTimeInterval: currentTimerInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -879,10 +1049,26 @@ class StockTickerWidget: BaristaWidget {
 
     // MARK: - Fetching
 
+    private var lastStockFetch: Date?
+    private var lastCryptoFetch: Date?
+
     private func fetchAll(force: Bool = false) {
-        for s in config.symbols { fetchStock(symbol: s, force: force) }
-        for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
-        if !config.coins.isEmpty { fetchCrypto(force: force) }
+        // While an endpoint is throttling us, only an explicit refresh gets through.
+        guard force || !isBackingOff else { return }
+
+        let now = Date()
+        let stocksDue = force || lastStockFetch.map { now.timeIntervalSince($0) >= stockRefreshInterval } ?? true
+        let cryptoDue = force || lastCryptoFetch.map { now.timeIntervalSince($0) >= cryptoRefreshInterval } ?? true
+
+        if stocksDue {
+            lastStockFetch = now
+            for s in config.symbols { fetchStock(symbol: s, force: force) }
+            for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
+        }
+        if cryptoDue, !config.coins.isEmpty {
+            lastCryptoFetch = now
+            fetchCrypto(force: force)
+        }
     }
 
     private func fetchStock(symbol: String, force: Bool = false) {
@@ -890,12 +1076,17 @@ class StockTickerWidget: BaristaWidget {
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
             guard let self = self else { return }
-            if case .success(let data) = result {
+            switch result {
+            case .success(let data):
                 self.lastFetchFailed = false
+                self.noteFetchSuccess()
                 self.parseStock(data: data, symbol: symbol, isIndex: false)
-            } else {
+            case .failure(let error):
+                self.noteFetchFailure(error)
                 DispatchQueue.main.async {
-                    self.failedSymbols.insert(symbol)
+                    // A throttled host is a whole-feed problem, not a bad ticker,
+                    // so don't brand the symbol as failed for it.
+                    if !self.isBackingOff { self.failedSymbols.insert(symbol) }
                     self.lastFetchFailed = true
                     self.onDisplayUpdate?()
                     self.onDataRefresh?()
@@ -908,8 +1099,14 @@ class StockTickerWidget: BaristaWidget {
         let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
-            guard let self = self, case .success(let data) = result else { return }
-            self.parseStock(data: data, symbol: symbol, isIndex: true)
+            guard let self = self else { return }
+            switch result {
+            case .success(let data):
+                self.noteFetchSuccess()
+                self.parseStock(data: data, symbol: symbol, isIndex: true)
+            case .failure(let error):
+                self.noteFetchFailure(error)
+            }
         }
     }
 
@@ -1092,18 +1289,20 @@ class StockTickerWidget: BaristaWidget {
         let ids = config.coins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let url = URL(string: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=\(config.cryptoCurrency)&ids=\(ids)&sparkline=true&price_change_percentage=24h") else { return }
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : cryptoCacheAge) { [weak self] result in
-            guard let self = self, case .success(let data) = result else {
-                if case .failure = result {
-                    DispatchQueue.main.async {
-                        self?.lastFetchFailed = true
-                        self?.onDataRefresh?()
-                        if self?.quotes.isEmpty == true { self?.onDisplayUpdate?() }
-                    }
+            guard let self = self else { return }
+            switch result {
+            case .success(let data):
+                self.lastFetchFailed = false
+                self.noteFetchSuccess()
+                self.parseCrypto(data: data)
+            case .failure(let error):
+                self.noteFetchFailure(error)
+                DispatchQueue.main.async {
+                    self.lastFetchFailed = true
+                    self.onDataRefresh?()
+                    if self.quotes.isEmpty { self.onDisplayUpdate?() }
                 }
-                return
             }
-            self.lastFetchFailed = false
-            self.parseCrypto(data: data)
         }
     }
 
@@ -1217,6 +1416,7 @@ class StockTickerWidget: BaristaWidget {
         if kind == .stock {
             config.symbols.removeAll { $0 == symbol }
             config.holdings.removeValue(forKey: symbol)
+            config.costBasis.removeValue(forKey: symbol)
             config.priceAlerts.removeValue(forKey: symbol)
             quotes.removeAll { $0.symbol == symbol && $0.kind == .stock }
             failedSymbols.remove(symbol)
@@ -1224,6 +1424,7 @@ class StockTickerWidget: BaristaWidget {
             let coinId = symbolToCoinID[symbol] ?? symbol.lowercased()
             config.coins.removeAll { $0 == coinId || (coinSymbols[$0] ?? "") == symbol }
             config.holdings.removeValue(forKey: symbol)
+            config.costBasis.removeValue(forKey: symbol)
             config.priceAlerts.removeValue(forKey: symbol)
             quotes.removeAll { $0.symbol == symbol && $0.kind == .crypto }
         }
@@ -1231,16 +1432,28 @@ class StockTickerWidget: BaristaWidget {
         DispatchQueue.main.async { self.onDisplayUpdate?(); self.onDataRefresh?() }
     }
 
-    func setHolding(symbol: String, kind: MarketQuote.Kind, quantity rawQuantity: Double) {
+    /// Sets share count and, optionally, the average price paid.
+    /// Pass `averageCost: nil` to leave any existing cost untouched; pass 0 to clear it.
+    func setHolding(symbol: String, kind: MarketQuote.Kind, quantity rawQuantity: Double,
+                    averageCost rawCost: Double? = nil) {
         let normalized = symbol.uppercased()
         let quantity = rawQuantity.isFinite ? max(0, rawQuantity) : 0
         if quantity > 0 {
             config.holdings[normalized] = quantity
+            if let rawCost {
+                let cost = rawCost.isFinite ? max(0, rawCost) : 0
+                if cost > 0 {
+                    config.costBasis[normalized] = cost
+                } else {
+                    config.costBasis.removeValue(forKey: normalized)
+                }
+            }
             if kind == .stock, !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
                 config.symbols.append(normalized)
             }
         } else {
             config.holdings.removeValue(forKey: normalized)
+            config.costBasis.removeValue(forKey: normalized)
         }
         saveConfig()
         onDisplayUpdate?()
@@ -1309,6 +1522,7 @@ class StockTickerWidget: BaristaWidget {
         if wasActive {
             config.activePortfolioID = config.portfolios[max(0, idx - 1)].id
         }
+        PortfolioHistoryService.shared.forget(portfolioID: id)
         portfoliosChanged()
         return true
     }
@@ -1336,9 +1550,11 @@ class StockTickerWidget: BaristaWidget {
         var positions: [PortfolioPosition] = []
         var missing: [String] = []
 
+        let costs = config.costBasis
         for (sym, qty) in config.holdings.sorted(by: { $0.key < $1.key }) where qty > 0 {
             if let q = portfolioQuote(for: sym) {
-                positions.append(PortfolioPosition(quote: q, quantity: qty))
+                let avg = costs[sym].flatMap { $0 > 0 ? $0 : nil }
+                positions.append(PortfolioPosition(quote: q, quantity: qty, averageCost: avg))
             } else {
                 missing.append(sym)
             }
@@ -1389,6 +1605,12 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func freshnessDescription(now: Date = Date()) -> String {
+        // Being throttled is the more useful thing to say - it explains why the
+        // numbers stopped moving, which a plain "Cached 4m ago" does not.
+        if isBackingOff {
+            let secs = Int(backoffRemaining.rounded())
+            return secs >= 60 ? "Throttled - retry \(secs / 60)m" : "Throttled - retry \(secs)s"
+        }
         guard let lastUpdated else { return lastFetchFailed ? "Offline" : "Loading" }
         let age = max(0, now.timeIntervalSince(lastUpdated))
         let prefix = isUsingCachedData || lastFetchFailed ? "Cached" : "Updated"
@@ -1398,6 +1620,7 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func freshnessColor(now: Date = Date()) -> NSColor {
+        if isBackingOff { return Theme.red }
         guard let lastUpdated else { return lastFetchFailed ? Theme.red : Theme.textGhost }
         let age = now.timeIntervalSince(lastUpdated)
         if lastFetchFailed || isUsingCachedData { return Theme.brandAmber }

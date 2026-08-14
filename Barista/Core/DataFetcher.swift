@@ -12,6 +12,20 @@ class DataFetcher {
         let timestamp: Date
     }
 
+    /// A non-2xx reply. Worth its own type so callers can tell "the server is
+    /// throttling us" apart from "the network is down" and back off accordingly.
+    struct HTTPError: LocalizedError {
+        let statusCode: Int
+        let host: String
+
+        var isRateLimited: Bool { statusCode == 429 }
+
+        var errorDescription: String? {
+            isRateLimited ? "\(host) is rate limiting requests (429)"
+                          : "\(host) returned HTTP \(statusCode)"
+        }
+    }
+
     /// Structured fetch request with method, headers, and body support.
     struct FetchRequest {
         let url: URL
@@ -68,6 +82,16 @@ class DataFetcher {
                 } else {
                     completion(.failure(error))
                 }
+                return
+            }
+
+            // A throttled or failing endpoint still returns a body ("Too Many
+            // Requests"), so without this check that body was treated as a good
+            // response and cached, which quietly served garbage to the parsers
+            // for the whole cache window.
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                completion(.failure(HTTPError(statusCode: http.statusCode,
+                                              host: request.url.host ?? request.url.absoluteString)))
                 return
             }
 
