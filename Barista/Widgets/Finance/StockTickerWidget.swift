@@ -14,6 +14,27 @@ struct MarketQuote: Codable, Equatable {
     var dayLow: Double?
     var volume: Double?
     var sparkline: [Double]
+
+    /// Unix seconds for each sparkline point, sampled with the same indices.
+    /// Lets several symbols be lined up by clock time rather than by position,
+    /// which matters when one has pre-market bars and another doesn't.
+    var sparklineTimes: [Double] = []
+
+    /// The full one-minute series behind the sparkline, before downsampling.
+    /// Drives the minute-resolution intraday portfolio curve.
+    ///
+    /// Deliberately excluded from Codable: the quote cache is rewritten on every
+    /// refresh, and persisting a few hundred KB of minute bars every few seconds
+    /// would be a lot of disk churn for data that is re-fetched anyway.
+    var minuteCloses: [Double] = []
+    var minuteTimes: [Double] = []
+
+    enum CodingKeys: String, CodingKey {
+        case symbol, price, change, kind, previousClose, dayHigh, dayLow, volume
+        case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
+        case openPrice, peRatio
+        case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
+    }
     var marketCap: Double?
     var fiftyTwoWeekHigh: Double?
     var fiftyTwoWeekLow: Double?
@@ -61,8 +82,23 @@ struct MarketQuote: Codable, Equatable {
         }
     }
 
+    /// Row sparklines are about 92pt wide, so roughly 180 points is the most that
+    /// can actually be resolved. Beyond that the extra bars are overdraw, and the
+    /// line starts reading as noise rather than detail.
+    static let rowChartResolution = 180
+
     var chartSeries: [Double] {
-        var series = sparkline.filter { $0.isFinite && $0 > 0 }
+        // Prefer the full minute bars, which are held live but never persisted.
+        // The 48-point sparkline is the fallback after a cache restore, before
+        // the first fetch lands.
+        var source = minuteCloses.count > sparkline.count ? minuteCloses : sparkline
+        if source.count > Self.rowChartResolution {
+            let step = Double(source.count - 1) / Double(Self.rowChartResolution - 1)
+            source = (0..<Self.rowChartResolution).map {
+                source[min(Int((Double($0) * step).rounded()), source.count - 1)]
+            }
+        }
+        var series = source.filter { $0.isFinite && $0 > 0 }
         if series.isEmpty {
             if let chartBaseline, chartBaseline > 0, currentPrice > 0 {
                 return [chartBaseline, currentPrice]
@@ -342,6 +378,13 @@ struct StockTickerConfig: Codable, Equatable {
     /// Range shown by the portfolio history chart.
     var historyRange: PortfolioHistoryService.Range = .month
 
+    /// Overlay a benchmark index on the history chart.
+    var compareToBenchmark: Bool = false
+
+    /// Collapsed state of the cards below the portfolio summary.
+    var historyCollapsed: Bool = false
+    var allocationCollapsed: Bool = false
+
     static let `default` = StockTickerConfig(
         symbols: ["AAPL", "MSFT", "SPY"],
         coins: ["bitcoin", "ethereum"],
@@ -373,7 +416,8 @@ struct StockTickerConfig: Codable, Equatable {
         case tickerWidth, cryptoCurrency, showVolume, showSparklines, showIndices, showExtendedHours
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
-        case historyRange
+        case historyRange, compareToBenchmark
+        case historyCollapsed, allocationCollapsed
     }
 
     init(symbols: [String] = ["AAPL", "MSFT", "SPY"], coins: [String] = ["bitcoin", "ethereum"],
@@ -442,6 +486,9 @@ struct StockTickerConfig: Codable, Equatable {
         cryptoCurrency = try c.decodeIfPresent(String.self, forKey: .cryptoCurrency) ?? "usd"
         priceAlerts = try c.decodeIfPresent([String: Double].self, forKey: .priceAlerts) ?? [:]
         historyRange = try c.decodeIfPresent(PortfolioHistoryService.Range.self, forKey: .historyRange) ?? .month
+        compareToBenchmark = try c.decodeIfPresent(Bool.self, forKey: .compareToBenchmark) ?? false
+        historyCollapsed = try c.decodeIfPresent(Bool.self, forKey: .historyCollapsed) ?? false
+        allocationCollapsed = try c.decodeIfPresent(Bool.self, forKey: .allocationCollapsed) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
@@ -475,6 +522,9 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(cryptoCurrency, forKey: .cryptoCurrency)
         try c.encode(priceAlerts, forKey: .priceAlerts)
         try c.encode(historyRange, forKey: .historyRange)
+        try c.encode(compareToBenchmark, forKey: .compareToBenchmark)
+        try c.encode(historyCollapsed, forKey: .historyCollapsed)
+        try c.encode(allocationCollapsed, forKey: .allocationCollapsed)
     }
 }
 
@@ -712,6 +762,9 @@ class StockTickerWidget: BaristaWidget {
         EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
             self?.onDisplayUpdate?()
             self?.onDataRefresh?()
+        }
+        if config.compareToBenchmark {
+            BenchmarkSeries.shared.refreshIfNeeded { [weak self] in self?.onDataRefresh?() }
         }
         timer = Timer.scheduledTimer(withTimeInterval: currentTimerInterval, repeats: true) { [weak self] _ in
             self?.tick()
@@ -1126,6 +1179,8 @@ class StockTickerWidget: BaristaWidget {
             }
 
             var dayHigh: Double?, dayLow: Double?, volume: Double?, sparkline: [Double] = []
+            var sparkTimes: [Double] = []
+            var fullCloses: [Double] = [], fullTimes: [Double] = []
             let timestamps = (first["timestamp"] as? [Any])?.compactMap { marketInt($0) } ?? []
 
             var preStart: Int = 0, preEnd: Int = 0
@@ -1174,6 +1229,15 @@ class StockTickerWidget: BaristaWidget {
                let qa = ind["quote"] as? [[String: Any]], let qd = qa.first {
                 allCloses = marketSeries(qd["close"])
                 sparkline = compact(allCloses)
+                // Keep the timestamps that line up with the compacted closes.
+                for (i, c) in allCloses.enumerated() where c != nil && c!.isFinite && c! > 0 {
+                    if i < timestamps.count { sparkTimes.append(Double(timestamps[i])) }
+                }
+                // Full resolution, kept aside before the sparkline is downsampled.
+                if sparkTimes.count == sparkline.count {
+                    fullCloses = sparkline
+                    fullTimes = sparkTimes
+                }
                 let highs = compact(marketSeries(qd["high"]))
                 let lows = compact(marketSeries(qd["low"]))
                 let vols = compact(marketSeries(qd["volume"]))
@@ -1189,7 +1253,16 @@ class StockTickerWidget: BaristaWidget {
             }
             let rawRegularPrice = marketDouble(meta["regularMarketPrice"])
 
-            sparkline = sampleSparkline(sparkline, count: 48)
+            // Sample closes and their timestamps through identical indices so the
+            // two arrays stay aligned.
+            if sparkTimes.count == sparkline.count {
+                let keep = sampleIndices(total: sparkline.count, count: 48)
+                sparkline = keep.map { sparkline[$0] }
+                sparkTimes = keep.map { sparkTimes[$0] }
+            } else {
+                sparkline = sampleSparkline(sparkline, count: 48)
+                sparkTimes = []
+            }
 
             // Extended hours
             var prePrice: Double?, preChgPct: Double?
@@ -1240,16 +1313,22 @@ class StockTickerWidget: BaristaWidget {
             case .open, .closed:
                 displayTail = price
             }
-            if sparkline.isEmpty { sparkline = [prev, displayTail] }
+            if sparkline.isEmpty {
+                sparkline = [prev, displayTail]
+                sparkTimes = []   // synthesised points have no real times
+            }
             if !sparkline.isEmpty { sparkline[sparkline.count - 1] = displayTail }
 
-            let q = MarketQuote(symbol: symbol, price: price, change: pct, kind: .stock,
+            var q = MarketQuote(symbol: symbol, price: price, change: pct, kind: .stock,
                                 previousClose: prev, dayHigh: dayHigh, dayLow: dayLow, volume: volume, sparkline: sparkline,
                                 marketCap: marketCap, fiftyTwoWeekHigh: fiftyTwoHigh,
                                 fiftyTwoWeekLow: fiftyTwoLow, openPrice: openPrice, peRatio: peRatio,
                                 preMarketPrice: prePrice, preMarketChange: preChgPct,
                                 postMarketPrice: postPrice, postMarketChange: postChgPct,
                                 marketState: marketState)
+            q.sparklineTimes = sparkTimes.count == sparkline.count ? sparkTimes : []
+            q.minuteCloses = fullCloses
+            q.minuteTimes = fullTimes
             DispatchQueue.main.async {
                 self.failedSymbols.remove(symbol)
                 self.lastFetchFailed = false
@@ -1351,6 +1430,14 @@ class StockTickerWidget: BaristaWidget {
         guard data.count > count else { return data }
         let step = Double(data.count - 1) / Double(count - 1)
         return (0..<count).map { data[min(Int(Double($0) * step), data.count - 1)] }
+    }
+
+    /// The indices sampleSparkline would keep, so a parallel array (timestamps)
+    /// can be reduced identically.
+    private func sampleIndices(total: Int, count: Int) -> [Int] {
+        guard total > count else { return Array(0..<total) }
+        let step = Double(total - 1) / Double(count - 1)
+        return (0..<count).map { min(Int(Double($0) * step), total - 1) }
     }
 
     // MARK: - Price Alerts
@@ -1468,6 +1555,104 @@ class StockTickerWidget: BaristaWidget {
         saveConfig()
         onDisplayUpdate?()
         onDataRefresh?()
+    }
+
+    // MARK: - Intraday Portfolio Curve
+
+    /// Today's portfolio value through the session, rebuilt from the per-symbol
+    /// intraday series already fetched for the row sparklines. No extra requests.
+    ///
+    /// Symbols are aligned on a shared clock-time grid rather than by array index:
+    /// a name with pre-market bars covers a wider window than one without, so
+    /// index i is not the same minute across symbols.
+    ///
+    /// Returns nil when the holdings can't be reconstructed honestly - a missing
+    /// or timestamp-less symbol would silently drop out of the total and read as
+    /// a loss that never happened.
+    func intradayPortfolioSeries() -> [(date: Date, value: Double)]? {
+        let holdings = config.holdings.filter { $0.value > 0 }
+        guard !holdings.isEmpty else { return nil }
+
+        // Gather each holding's timestamped series, preferring the full
+        // one-minute bars and falling back to the sampled sparkline.
+        var series: [(qty: Double, times: [Double], values: [Double])] = []
+        for (symbol, qty) in holdings {
+            guard let quote = portfolioQuote(for: symbol) else { return nil }
+            let times = quote.minuteTimes.isEmpty ? quote.sparklineTimes : quote.minuteTimes
+            let values = quote.minuteCloses.isEmpty ? quote.sparkline : quote.minuteCloses
+            guard times.count == values.count, times.count >= 2 else { return nil }
+            series.append((qty, times, values))
+        }
+
+        // The grid runs over the window every holding covers, so no point is
+        // computed from a symbol that hadn't started trading yet.
+        guard let gridStart = series.compactMap({ $0.times.first }).max(),
+              let gridEnd = series.compactMap({ $0.times.last }).min(),
+              gridEnd > gridStart else { return nil }
+
+        // One point per minute across the session.
+        let minute: Double = 60
+        let startMinute = (gridStart / minute).rounded(.up) * minute
+        let steps = max(1, Int((gridEnd - startMinute) / minute))
+        guard steps >= 1 else { return nil }
+
+        let cashValue = max(0, config.cash)
+        var out: [(date: Date, value: Double)] = []
+        out.reserveCapacity(steps + 1)
+
+        for i in 0...steps {
+            let t = min(startMinute + Double(i) * minute, gridEnd)
+            var total = cashValue
+            for s in series {
+                guard let price = Self.value(in: s.values, times: s.times, at: t) else { return nil }
+                total += price * s.qty
+            }
+            out.append((Date(timeIntervalSince1970: t), total))
+        }
+        return out.count >= 2 ? out : nil
+    }
+
+    /// A benchmark curve for today, read off the index's own intraday bars and
+    /// rebased to the portfolio's opening value. SPY is normally already in the
+    /// watchlist or fetched for the indices bar, so this costs nothing.
+    func intradayBenchmarkSeries(symbol: String = BenchmarkSeries.defaultSymbol,
+                                 matching times: [Date],
+                                 startingAt startValue: Double) -> [(date: Date, value: Double)]? {
+        guard times.count >= 2, startValue > 0 else { return nil }
+        guard let quote = portfolioQuote(for: symbol)
+                ?? indexQuotes.first(where: { $0.symbol == symbol }) else { return nil }
+
+        let series = quote.minuteTimes.isEmpty ? quote.sparklineTimes : quote.minuteTimes
+        let values = quote.minuteCloses.isEmpty ? quote.sparkline : quote.minuteCloses
+        guard series.count == values.count, series.count >= 2 else { return nil }
+
+        // Anchor on the index's price at the portfolio's first timestamp, so both
+        // lines begin together.
+        let t0 = times[0].timeIntervalSince1970
+        guard let base = Self.value(in: values, times: series, at: t0), base > 0 else { return nil }
+
+        var out: [(date: Date, value: Double)] = []
+        for date in times {
+            guard let price = Self.value(in: values, times: series,
+                                         at: date.timeIntervalSince1970) else { continue }
+            out.append((date, startValue * (price / base)))
+        }
+        // Same honesty rule as the daily path: don't draw through gaps.
+        return out.count >= max(2, Int(Double(times.count) * 0.6)) ? out : nil
+    }
+
+    /// Last observed value at or before `t`, so each symbol is read as it stood
+    /// at that moment rather than interpolated into the future.
+    private static func value(in values: [Double], times: [Double], at t: Double) -> Double? {
+        guard !times.isEmpty, times.count == values.count else { return nil }
+        if t <= times[0] { return values[0] }
+        if t >= times[times.count - 1] { return values[values.count - 1] }
+        var lo = 0, hi = times.count - 1
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2
+            if times[mid] <= t { lo = mid } else { hi = mid }
+        }
+        return values[lo]
     }
 
     // MARK: - Portfolio Management
