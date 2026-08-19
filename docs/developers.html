@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Developers - Barista</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="stylesheet" href="style.css">
+<style>
+/* ==============================
+   Developers - Hero
+   ============================== */
+.d-hero {
+  position: relative;
+  padding: calc(var(--nav-h) + 100px) 0 60px;
+  text-align: center;
+  overflow: hidden;
+}
+.d-hero .t-display { margin-bottom: 16px; }
+.d-hero .t-body-lg { max-width: 500px; margin: 0 auto; }
+
+/* ==============================
+   Developers - Layout
+   ============================== */
+.doc-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 56px;
+  align-items: start;
+}
+
+.doc-sidebar {
+  position: sticky;
+  top: calc(var(--nav-h) + 32px);
+}
+.doc-sidebar ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.doc-sidebar a {
+  display: block;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text3);
+  border-radius: 8px;
+  transition: color .2s, background .2s;
+  border-left: 2px solid transparent;
+}
+.doc-sidebar a:hover {
+  color: var(--text2);
+  background: rgba(255,255,255,.03);
+}
+.doc-sidebar a.active {
+  color: var(--amber-b);
+  background: var(--amber-dim);
+  border-left-color: var(--amber);
+}
+
+.doc-content { min-width: 0; }
+
+/* ==============================
+   Developers - Sections
+   ============================== */
+.doc-section {
+  padding-bottom: 72px;
+  margin-bottom: 72px;
+  border-bottom: 1px solid var(--border);
+}
+.doc-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+.doc-section h2 {
+  font-size: 28px;
+  font-weight: 750;
+  letter-spacing: -.03em;
+  margin-bottom: 12px;
+}
+.doc-section h3 {
+  font-size: 18px;
+  font-weight: 650;
+  margin: 36px 0 14px;
+  color: var(--text);
+}
+.doc-section > p {
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--text2);
+  margin-bottom: 20px;
+  max-width: 640px;
+}
+.doc-section ul, .doc-section ol {
+  margin: 0 0 20px 0;
+  padding-left: 24px;
+}
+.doc-section li {
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--text2);
+  margin-bottom: 8px;
+}
+
+/* ==============================
+   Developers - Table
+   ============================== */
+.doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 24px;
+  font-size: 13.5px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.doc-table th {
+  text-align: left;
+  padding: 12px 16px;
+  font-weight: 650;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.doc-table td {
+  padding: 12px 16px;
+  color: var(--text2);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.doc-table tr:last-child td { border-bottom: none; }
+.doc-table code { font-size: .85em; }
+
+/* ==============================
+   Developers - Callout
+   ============================== */
+.callout {
+  padding: 20px 24px;
+  border-radius: var(--r);
+  border: 1px solid rgba(229,164,15,.12);
+  background: var(--amber-dim);
+  margin-bottom: 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text2);
+}
+.callout strong { color: var(--amber-b); }
+
+.callout-teal {
+  border-color: rgba(30,201,174,.12);
+  background: var(--teal-dim);
+}
+.callout-teal strong { color: var(--teal); }
+
+/* ==============================
+   Developers - Steps
+   ============================== */
+.steps {
+  counter-reset: step;
+  padding-left: 0;
+  list-style: none;
+}
+.steps li {
+  counter-increment: step;
+  position: relative;
+  padding-left: 48px;
+  padding-bottom: 32px;
+  border-left: 1px solid var(--border);
+  margin-left: 15px;
+}
+.steps li:last-child { border-left: none; padding-bottom: 0; }
+.steps li::before {
+  content: counter(step);
+  position: absolute;
+  left: -16px;
+  top: -2px;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--amber-b);
+}
+.steps li h4 {
+  font-size: 16px;
+  font-weight: 650;
+  margin-bottom: 8px;
+  letter-spacing: -.01em;
+}
+.steps li p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text2);
+  margin-bottom: 12px;
+}
+
+@media (max-width: 960px) {
+  .doc-layout { grid-template-columns: 1fr; gap: 0; }
+  .doc-sidebar { position: static; margin-bottom: 40px; }
+  .doc-sidebar ul { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .doc-sidebar a { border-left: none; border-bottom: 2px solid transparent; }
+  .doc-sidebar a.active { border-left: none; border-bottom-color: var(--amber); }
+}
+</style>
+</head>
+<body>
+<div style="position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden">
+  <div style="position:absolute;border-radius:50%;filter:blur(100px);width:450px;height:450px;top:-5%;left:20%;background:radial-gradient(circle,rgba(147,102,255,.05),transparent 70%);animation:orb-f 22s ease-in-out infinite alternate"></div>
+  <div style="position:absolute;border-radius:50%;filter:blur(100px);width:400px;height:400px;bottom:20%;right:10%;background:radial-gradient(circle,rgba(30,201,174,.04),transparent 70%);animation:orb-f 20s ease-in-out infinite alternate;animation-delay:-8s"></div>
+</div>
+<style>@keyframes orb-f{0%{transform:translate(0,0) scale(1)}50%{transform:translate(25px,-20px) scale(1.03)}100%{transform:translate(-15px,20px) scale(.97)}}</style>
+<div class="grid-bg"></div>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="container">
+    <div class="nav-left">
+      <a href="./" class="nav-brand"><img src="icon.png" alt="Barista">Barista</a>
+      <ul class="nav-menu" id="navMenu">
+        <li><a href="./">Home</a></li>
+        <li><a href="features.html">Features</a></li>
+        <li><a href="widgets.html">Widgets</a></li>
+        <li><a href="developers.html" class="active">Developers</a></li>
+      </ul>
+    </div>
+    <div class="nav-right">
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="nav-gh">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
+      <button class="nav-toggle" onclick="document.getElementById('navMenu').classList.toggle('open')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="d-hero">
+  <div class="container">
+    <h1 class="t-display" data-r>Build <span class="t-gradient-cool">anything.</span></h1>
+    <p class="t-body-lg" data-r>Architecture reference, widget creation guide, xbar compatibility, and build instructions.</p>
+  </div>
+</section>
+
+<!-- Docs -->
+<section style="padding-bottom:120px">
+  <div class="container">
+    <div class="doc-layout">
+
+      <!-- Sidebar -->
+      <aside class="doc-sidebar" data-r>
+        <ul>
+          <li><a href="#architecture" class="active">Architecture</a></li>
+          <li><a href="#creating-widgets">Creating Widgets</a></li>
+          <li><a href="#display-modes">Display Modes</a></li>
+          <li><a href="#protocols">Protocols</a></li>
+          <li><a href="#xbar">xbar Scripts</a></li>
+          <li><a href="#building">Building</a></li>
+          <li><a href="#security">Security</a></li>
+        </ul>
+      </aside>
+
+      <!-- Content -->
+      <div class="doc-content">
+
+        <!-- Architecture -->
+        <div id="architecture" class="doc-section" data-r>
+          <h2>Architecture</h2>
+          <p>Barista is a native macOS menu bar app built with AppKit and Swift Package Manager. Zero third-party dependencies. Every widget is a standalone Swift file conforming to the <code>BaristaWidget</code> protocol.</p>
+
+          <h3>Project structure</h3>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Barista/</span>
+            </div>
+            <pre><span class="fn">Core/</span>
+  BaristaWidget.swift       <span class="cm">// widget protocol + registry</span>
+  AnyBaristaWidget.swift    <span class="cm">// type-erased wrapper</span>
+  WidgetInstance.swift       <span class="cm">// status item lifecycle</span>
+  StatusBarController.swift  <span class="cm">// manages all instances</span>
+  DataFetcher.swift          <span class="cm">// HTTPS-only network layer</span>
+  MenuBarManager.swift       <span class="cm">// hide/show/reorder</span>
+  ProfileManager.swift       <span class="cm">// named widget profiles</span>
+
+<span class="fn">Widgets/</span>
+  <span class="fn">Finance/</span>       <span class="cm">// StockTicker, Crypto, Forex</span>
+  <span class="fn">System/</span>        <span class="cm">// CPU, Memory, Disk, Network, GPU, Temp</span>
+  <span class="fn">Weather/</span>       <span class="cm">// Weather, AirQuality, UVIndex</span>
+  <span class="fn">Productivity/</span>  <span class="cm">// Pomodoro, FocusTask, Meeting, Clipboard</span>
+  <span class="fn">Sports/</span>        <span class="cm">// LiveScores, F1, Soccer</span>
+  <span class="fn">Developer/</span>     <span class="cm">// Docker, GitHub, ServerPing</span>
+  <span class="fn">...</span>            <span class="cm">// 12 categories total</span>
+
+<span class="fn">App/</span>
+  AppDelegate.swift          <span class="cm">// settings window + gallery</span></pre>
+          </div>
+
+          <h3>Data flow</h3>
+          <p>Each widget runs independently. On <code>start()</code>, it fetches data (API, shell, local), updates internal state, and calls <code>onDisplayUpdate?()</code>. The <code>WidgetInstance</code> calls <code>render()</code> to get a <code>WidgetDisplayMode</code> and applies it to the <code>NSStatusItem</code> button. Dropdowns are built lazily via <code>buildDropdownMenu()</code>.</p>
+        </div>
+
+        <!-- Creating Widgets -->
+        <div id="creating-widgets" class="doc-section" data-r>
+          <h2>Creating a Widget</h2>
+          <p>Every widget needs a config struct, a class conforming to <code>BaristaWidget</code>, and registration in the widget registry. Three steps.</p>
+
+          <ol class="steps">
+            <li>
+              <h4>Define the config</h4>
+              <p>A <code>Codable</code> struct that holds user-configurable values. Must have a static <code>default</code>.</p>
+              <div class="code-block">
+                <div class="code-block-header">
+                  <div class="code-block-dot red"></div>
+                  <div class="code-block-dot yellow"></div>
+                  <div class="code-block-dot green"></div>
+                  <span class="code-block-title">MyWidget.swift</span>
+                </div>
+                <pre><span class="kw">struct</span> <span class="tp">MyWidgetConfig</span>: <span class="tp">Codable</span>, <span class="tp">Equatable</span> {
+    <span class="kw">var</span> refreshRate: <span class="tp">Int</span>
+    <span class="kw">static let</span> `default` = <span class="tp">MyWidgetConfig</span>(refreshRate: <span class="num">60</span>)
+}</pre>
+              </div>
+            </li>
+            <li>
+              <h4>Implement the widget</h4>
+              <p>Conform to <code>BaristaWidget</code> with all required static properties and instance methods.</p>
+              <div class="code-block">
+                <div class="code-block-header">
+                  <div class="code-block-dot red"></div>
+                  <div class="code-block-dot yellow"></div>
+                  <div class="code-block-dot green"></div>
+                  <span class="code-block-title">MyWidget.swift</span>
+                </div>
+                <pre><span class="kw">class</span> <span class="tp">MyWidget</span>: <span class="tp">BaristaWidget</span> {
+    <span class="kw">static let</span> widgetID = <span class="str">"my-widget"</span>
+    <span class="kw">static let</span> displayName = <span class="str">"My Widget"</span>
+    <span class="kw">static let</span> subtitle = <span class="str">"Does something cool"</span>
+    <span class="kw">static let</span> iconName = <span class="str">"star"</span>         <span class="cm">// SF Symbol</span>
+    <span class="kw">static let</span> category = <span class="tp">WidgetCategory</span>.utility
+    <span class="kw">static let</span> allowsMultiple = <span class="kw">false</span>
+    <span class="kw">static let</span> isPremium = <span class="kw">false</span>
+    <span class="kw">static let</span> defaultConfig = <span class="tp">MyWidgetConfig</span>.default
+
+    <span class="kw">var</span> config: <span class="tp">MyWidgetConfig</span>
+    <span class="kw">var</span> onDisplayUpdate: (() -> <span class="tp">Void</span>)?
+
+    <span class="kw">required init</span>(config: <span class="tp">MyWidgetConfig</span>) {
+        <span class="kw">self</span>.config = config
+    }
+
+    <span class="kw">func</span> <span class="fn">start</span>() { <span class="cm">/* begin fetching data */</span> }
+    <span class="kw">func</span> <span class="fn">stop</span>()  { <span class="cm">/* invalidate timers */</span> }
+
+    <span class="kw">func</span> <span class="fn">render</span>() -> <span class="tp">WidgetDisplayMode</span> {
+        <span class="kw">return</span> .text(<span class="str">"Hello"</span>)
+    }
+
+    <span class="kw">func</span> <span class="fn">buildDropdownMenu</span>() -> <span class="tp">NSMenu</span> {
+        <span class="kw">let</span> menu = <span class="tp">NSMenu</span>()
+        <span class="cm">// add items...</span>
+        <span class="kw">return</span> menu
+    }
+
+    <span class="kw">func</span> <span class="fn">buildConfigControls</span>(
+        onChange: <span class="kw">@escaping</span> () -> <span class="tp">Void</span>
+    ) -> [<span class="tp">NSView</span>] {
+        <span class="kw">return</span> []
+    }
+}</pre>
+              </div>
+            </li>
+            <li>
+              <h4>Register it</h4>
+              <p>One line in <code>BaristaWidget.swift</code>:</p>
+              <div class="code-block">
+                <div class="code-block-header">
+                  <div class="code-block-dot red"></div>
+                  <div class="code-block-dot yellow"></div>
+                  <div class="code-block-dot green"></div>
+                  <span class="code-block-title">BaristaWidget.swift</span>
+                </div>
+                <pre><span class="tp">WidgetRegistry</span>.<span class="fn">register</span>(<span class="tp">MyWidget</span>.<span class="kw">self</span>)</pre>
+              </div>
+            </li>
+          </ol>
+
+          <div class="callout">
+            <strong>Tip:</strong> Set <code>allowsMultiple = true</code> if users should be able to add multiple instances with different configs (e.g., multiple stock tickers tracking different symbols).
+          </div>
+        </div>
+
+        <!-- Display Modes -->
+        <div id="display-modes" class="doc-section" data-r>
+          <h2>Display Modes</h2>
+          <p>The <code>render()</code> method returns a <code>WidgetDisplayMode</code> that controls how the widget appears in the menu bar.</p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Mode</th><th>Usage</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>.text(String)</code></td><td>Plain text label</td><td><code>.text("72F")</code></td></tr>
+              <tr><td><code>.attributedText(NSAttributedString)</code></td><td>Colored or styled text</td><td>Green text for live scores</td></tr>
+              <tr><td><code>.icon(NSImage)</code></td><td>Template image</td><td>Coffee cup, moon icon</td></tr>
+              <tr><td><code>.iconAndText(NSImage, String)</code></td><td>Image with label</td><td>Battery icon + percentage</td></tr>
+              <tr><td><code>.scrollingText(NSAttributedString, width:)</code></td><td>Marquee for long content</td><td>News headlines, long tickers</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Protocols -->
+        <div id="protocols" class="doc-section" data-r>
+          <h2>Protocols</h2>
+          <p>Optional protocols add capabilities to your widget.</p>
+
+          <h3>Cycleable</h3>
+          <p>Widgets that cycle through multiple items (e.g., Live Scores cycling through games).</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Protocol</span>
+            </div>
+            <pre><span class="kw">protocol</span> <span class="tp">Cycleable</span> {
+    <span class="kw">var</span> itemCount: <span class="tp">Int</span> { <span class="kw">get</span> }
+    <span class="kw">var</span> currentIndex: <span class="tp">Int</span> { <span class="kw">get</span> }
+    <span class="kw">var</span> cycleInterval: <span class="tp">TimeInterval</span> { <span class="kw">get</span> }
+    <span class="kw">func</span> <span class="fn">cycleNext</span>()
+}</pre>
+          </div>
+
+          <h3>InteractiveDropdown</h3>
+          <p>Widgets that show a rich popover instead of a plain NSMenu.</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Protocol</span>
+            </div>
+            <pre><span class="kw">protocol</span> <span class="tp">InteractiveDropdown</span> {
+    <span class="kw">func</span> <span class="fn">buildPopoverContent</span>() -> <span class="tp">NSView</span>
+    <span class="kw">var</span> popoverSize: <span class="tp">NSSize</span> { <span class="kw">get</span> }
+}</pre>
+          </div>
+        </div>
+
+        <!-- xbar -->
+        <div id="xbar" class="doc-section" data-r>
+          <h2>xbar Script Compatibility</h2>
+          <p>Barista's Script Widget runs xbar/SwiftBar-compatible scripts. Write a shell script, set it as the script path, and Barista parses the output.</p>
+
+          <h3>Output format</h3>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">my-script.5m.sh</span>
+            </div>
+            <pre><span class="cm">#!/bin/bash</span>
+<span class="fn">echo</span> <span class="str">"Menu Bar Text"</span>
+<span class="fn">echo</span> <span class="str">"---"</span>
+<span class="fn">echo</span> <span class="str">"Dropdown Item 1 | color=green"</span>
+<span class="fn">echo</span> <span class="str">"Dropdown Item 2 | href=https://example.com"</span>
+<span class="fn">echo</span> <span class="str">"--Submenu Item | color=#aaa"</span></pre>
+          </div>
+
+          <h3>Pipe parameters</h3>
+          <table class="doc-table">
+            <thead>
+              <tr><th>Parameter</th><th>Description</th><th>Example</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>color</code></td><td>Text color (name or hex)</td><td><code>color=#ff6600</code></td></tr>
+              <tr><td><code>href</code></td><td>URL to open on click</td><td><code>href=https://example.com</code></td></tr>
+              <tr><td><code>bash</code></td><td>Shell command on click</td><td><code>bash=/usr/local/bin/script</code></td></tr>
+              <tr><td><code>sfimage</code></td><td>SF Symbol icon</td><td><code>sfimage=star.fill</code></td></tr>
+              <tr><td><code>size</code></td><td>Font size in points</td><td><code>size=14</code></td></tr>
+              <tr><td><code>font</code></td><td>Font family name</td><td><code>font=Menlo</code></td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout-teal callout">
+            <strong>Security:</strong> Shell paths are validated against a whitelist. Only <code>/bin/sh</code>, <code>/bin/bash</code>, <code>/bin/zsh</code>, and their <code>/usr/local</code> and <code>/opt/homebrew</code> variants are allowed. Scripts in system directories are blocked.
+          </div>
+        </div>
+
+        <!-- Building -->
+        <div id="building" class="doc-section" data-r>
+          <h2>Building from Source</h2>
+
+          <h3>Requirements</h3>
+          <ul>
+            <li>macOS 13 Ventura or later</li>
+            <li>Xcode 15+ (or Swift 5.9+ toolchain)</li>
+            <li>No third-party dependencies required</li>
+          </ul>
+
+          <h3>Clone and build</h3>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Terminal</span>
+            </div>
+            <pre><span class="fn">git</span> clone https://github.com/noamsmall18/barista.git
+<span class="fn">cd</span> barista
+<span class="fn">swift</span> build</pre>
+          </div>
+
+          <h3>Release build</h3>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Terminal</span>
+            </div>
+            <pre><span class="cm"># Optimized binary</span>
+<span class="fn">swift</span> build -c release
+
+<span class="cm"># Package as .app</span>
+<span class="fn">mkdir</span> -p dist/Barista.app/Contents/MacOS
+<span class="fn">cp</span> .build/release/Barista dist/Barista.app/Contents/MacOS/
+<span class="fn">cp</span> Barista/Info.plist dist/Barista.app/Contents/
+
+<span class="cm"># Codesign</span>
+<span class="fn">codesign</span> --force --sign - \
+  --entitlements Barista/Barista.entitlements \
+  dist/Barista.app</pre>
+          </div>
+
+          <h3>Run</h3>
+          <div class="code-block">
+            <div class="code-block-header">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">Terminal</span>
+            </div>
+            <pre><span class="fn">open</span> dist/Barista.app</pre>
+          </div>
+        </div>
+
+        <!-- Security -->
+        <div id="security" class="doc-section" data-r>
+          <h2>Security</h2>
+          <p>Barista is hardened against common attack vectors. All network requests, script execution, and user input are validated.</p>
+
+          <table class="doc-table">
+            <thead>
+              <tr><th>Layer</th><th>Protection</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Network</strong></td><td>HTTPS-only enforcement in DataFetcher. All URL parameters percent-encoded.</td></tr>
+              <tr><td><strong>Scripts</strong></td><td>Shell whitelist (6 allowed paths). System directory execution blocked. File permission checks.</td></tr>
+              <tr><td><strong>Input</strong></td><td>Host sanitization on ServerPing. Symbol encoding on Finance widgets. Path traversal prevention.</td></tr>
+              <tr><td><strong>xbar</strong></td><td><code>href</code> restricted to http/https schemes. AppleScript bash handler sanitized.</td></tr>
+              <tr><td><strong>Sandbox</strong></td><td>App Sandbox entitlement with minimal permissions. Outgoing network + file read only.</td></tr>
+            </tbody>
+          </table>
+
+          <div class="callout">
+            <strong>Reporting vulnerabilities:</strong> If you find a security issue, please open a GitHub issue or contact the maintainer directly. We take security seriously and will patch critical issues within 24 hours.
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand"><img src="icon.png" alt="">Barista</div>
+      <div class="footer-links">
+        <a href="https://github.com/noamsmall18/barista">Source</a>
+        <a href="https://github.com/noamsmall18/barista/releases">Releases</a>
+        <a href="https://github.com/noamsmall18/barista/blob/main/LICENSE">MIT License</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* Reveal */
+const revealEls = document.querySelectorAll('[data-r],[data-r-stagger],[data-r-scale]');
+const ro = new IntersectionObserver(es => {
+  es.forEach(e => { if(e.isIntersecting){e.target.classList.add('v');ro.unobserve(e.target)} })
+}, {threshold:.05, rootMargin:'0px 0px 50px 0px'});
+revealEls.forEach(el => {
+  const r = el.getBoundingClientRect();
+  if(r.top < window.innerHeight && r.bottom > 0) { el.classList.add('v'); }
+  else { ro.observe(el); }
+});
+
+/* Sidebar scroll spy */
+const sections = document.querySelectorAll('.doc-section');
+const links = document.querySelectorAll('.doc-sidebar a');
+const spy = new IntersectionObserver(es => {
+  es.forEach(e => {
+    if(e.isIntersecting) {
+      links.forEach(l => l.classList.remove('active'));
+      const a = document.querySelector('.doc-sidebar a[href="#' + e.target.id + '"]');
+      if(a) a.classList.add('active');
+    }
+  });
+}, {threshold:.15, rootMargin:'-80px 0px -50% 0px'});
+sections.forEach(s => spy.observe(s));
+</script>
+</body>
+</html>

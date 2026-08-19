@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Features - Barista</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="stylesheet" href="style.css">
+<style>
+/* Ambient */
+.ambient{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.orb{position:absolute;border-radius:50%;filter:blur(100px);animation:orb-float 20s ease-in-out infinite alternate}
+.orb-1{width:500px;height:500px;top:-10%;right:10%;background:radial-gradient(circle,rgba(30,201,174,.06),transparent 70%)}
+.orb-2{width:400px;height:400px;bottom:20%;left:10%;background:radial-gradient(circle,rgba(229,164,15,.05),transparent 70%);animation-delay:-8s}
+@keyframes orb-float{0%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-20px) scale(1.04)}100%{transform:translate(-15px,25px) scale(.97)}}
+
+/* Hero */
+.f-hero {
+  position: relative;
+  padding: calc(var(--nav-h) + 100px) 0 60px;
+  text-align: center;
+  overflow: hidden;
+}
+.f-hero .t-display { margin-bottom: 16px; }
+.f-hero .t-body-lg { max-width: 500px; margin: 0 auto; }
+
+/* ==============================
+   Features - Showcase Rows
+   ============================== */
+.showcase {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: center;
+  padding: 100px 0;
+}
+.showcase + .showcase { border-top: 1px solid var(--border); }
+.showcase.flip .showcase-text { order: 2; }
+.showcase.flip .showcase-visual { order: 1; }
+
+.showcase-text .t-label { margin-bottom: 12px; display: block; }
+.showcase-text h2 {
+  font-size: 32px;
+  font-weight: 750;
+  letter-spacing: -.03em;
+  margin-bottom: 12px;
+  line-height: 1.1;
+}
+.showcase-text > p {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text2);
+  margin-bottom: 20px;
+  max-width: 420px;
+}
+.showcase-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.showcase-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+.showcase-list li svg {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--amber);
+}
+
+.showcase-visual {
+  position: relative;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+}
+
+/* Visual: bordered container */
+.vis-frame {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  padding: 28px;
+  transition: border-color .3s;
+}
+.vis-frame:hover { border-color: var(--border-h); }
+
+/* Demo: Ticker tape */
+.demo-tape {
+  display: flex;
+  gap: 20px;
+  overflow: hidden;
+}
+.demo-ticker {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 20px;
+  min-width: 160px;
+}
+.demo-ticker-symbol {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+.demo-ticker-price {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+.demo-ticker-change {
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+/* Demo: Gradient editor */
+.demo-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.demo-editor-preview {
+  height: 48px;
+  border-radius: 10px;
+  position: relative;
+  overflow: hidden;
+}
+.demo-editor-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.demo-swatch {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+}
+.demo-slider-track {
+  flex: 1;
+  height: 6px;
+  background: var(--surface3);
+  border-radius: 3px;
+  position: relative;
+}
+.demo-slider-fill {
+  height: 100%;
+  border-radius: 3px;
+  position: absolute;
+  left: 0; top: 0;
+}
+.demo-slider-thumb {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--border);
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.demo-preset-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+.demo-preset {
+  height: 24px;
+  flex: 1;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform .2s;
+}
+.demo-preset:hover { transform: scale(1.05); }
+
+/* Demo: Process table */
+.demo-procs {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.demo-proc-header, .demo-proc-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+}
+.demo-proc-header {
+  color: var(--text3);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: 10px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.demo-proc-row {
+  color: var(--text2);
+  font-family: var(--mono);
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.demo-proc-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface3);
+  overflow: hidden;
+  margin-top: 4px;
+  grid-column: span 4;
+}
+.demo-proc-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+/* Demo: Script output */
+.demo-script {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.8;
+}
+.demo-script .line-num {
+  color: var(--text3);
+  display: inline-block;
+  width: 24px;
+  text-align: right;
+  margin-right: 16px;
+  user-select: none;
+}
+
+/* Demo: Profile switcher */
+.demo-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.demo-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: all .2s;
+  cursor: pointer;
+}
+.demo-profile:hover { border-color: var(--border-h); }
+.demo-profile.active { border-color: rgba(229,164,15,.12); background: var(--amber-dim); }
+.demo-profile-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.demo-profile-name {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+}
+.demo-profile-count {
+  font-size: 11px;
+  color: var(--text3);
+}
+
+/* Demo: Menu manager */
+.demo-bar-items {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+}
+.demo-bar-item {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+}
+.demo-bar-item.hidden { opacity: .3; }
+.demo-bar-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+}
+.demo-vis-controls {
+  display: flex;
+  gap: 8px;
+}
+.demo-vis-btn {
+  flex: 1;
+  padding: 8px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text3);
+  transition: all .2s;
+  cursor: pointer;
+}
+.demo-vis-btn:hover { color: var(--text2); border-color: var(--border-h); }
+.demo-vis-btn.active { color: var(--amber-b); border-color: rgba(229,164,15,.12); background: var(--amber-dim); }
+
+@media (max-width: 860px) {
+  .showcase { grid-template-columns: 1fr; gap: 40px; }
+  .showcase.flip .showcase-text { order: 1; }
+  .showcase.flip .showcase-visual { order: 2; }
+}
+</style>
+</head>
+<body>
+<div class="ambient"><div class="orb orb-1"></div><div class="orb orb-2"></div></div>
+<div class="grid-bg"></div>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="container">
+    <div class="nav-left">
+      <a href="./" class="nav-brand"><img src="icon.png" alt="Barista">Barista</a>
+      <ul class="nav-menu" id="navMenu">
+        <li><a href="./">Home</a></li>
+        <li><a href="features.html" class="active">Features</a></li>
+        <li><a href="widgets.html">Widgets</a></li>
+        <li><a href="developers.html">Developers</a></li>
+      </ul>
+    </div>
+    <div class="nav-right">
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="nav-gh">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
+      <button class="nav-toggle" onclick="document.getElementById('navMenu').classList.toggle('open')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="f-hero">
+  <div class="container">
+    <h1 class="t-display" data-r>Built for <span class="t-gradient-cool">power users.</span></h1>
+    <p class="t-body-lg" data-r>Deep dive into everything Barista can do. Six core systems, zero compromises.</p>
+  </div>
+</section>
+
+<section style="padding-bottom:120px">
+  <div class="container">
+
+    <!-- 1: Finance -->
+    <div class="showcase" data-r>
+      <div class="showcase-text">
+        <span class="t-label">Finance</span>
+        <h2>Real-time market data.</h2>
+        <p>Live stock tickers, cryptocurrency prices, and forex rates directly in your menu bar. Powered by Yahoo Finance and CoinGecko APIs.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Multiple symbols with independent refresh</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Color-coded gains and losses</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Scrolling text for long tickers</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Dropdown with day range, volume, market cap</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="demo-tape">
+            <div class="demo-ticker">
+              <div class="demo-ticker-symbol">AAPL</div>
+              <div class="demo-ticker-price" style="color:var(--green)">$198.42</div>
+              <div class="demo-ticker-change" style="color:var(--green)">+2.34 (1.19%)</div>
+            </div>
+            <div class="demo-ticker">
+              <div class="demo-ticker-symbol">TSLA</div>
+              <div class="demo-ticker-price" style="color:var(--red)">$162.10</div>
+              <div class="demo-ticker-change" style="color:var(--red)">-1.28 (0.78%)</div>
+            </div>
+            <div class="demo-ticker">
+              <div class="demo-ticker-symbol">BTC</div>
+              <div class="demo-ticker-price" style="color:var(--green)">$67,241</div>
+              <div class="demo-ticker-change" style="color:var(--green)">+842 (1.27%)</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2: Menu Bar Styling -->
+    <div class="showcase flip" data-r>
+      <div class="showcase-text">
+        <span class="t-label" style="color:var(--teal)">Unique Feature</span>
+        <h2>Menu bar styling.</h2>
+        <p>No other app lets you style the macOS menu bar itself. Apply solid colors, multi-stop gradients, dynamic time-based themes, or frosted glass effects.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Solid, gradient, dynamic, frosted glass modes</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Adjustable opacity and blend modes</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Built-in presets: Midnight, Sunset, Ocean, Forest</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Click-through overlay, fullscreen aware</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="demo-editor">
+            <div class="demo-editor-preview" style="background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460,#533483)"></div>
+            <div class="demo-editor-controls">
+              <div class="demo-swatch" style="background:#1a1a2e"></div>
+              <div class="demo-swatch" style="background:#16213e"></div>
+              <div class="demo-swatch" style="background:#0f3460"></div>
+              <div class="demo-swatch" style="background:#533483"></div>
+              <div class="demo-slider-track" style="flex:1">
+                <div class="demo-slider-fill" style="width:65%;background:linear-gradient(90deg,var(--amber),var(--teal))"></div>
+                <div class="demo-slider-thumb" style="left:65%"></div>
+              </div>
+            </div>
+            <div class="demo-preset-row">
+              <div class="demo-preset" style="background:linear-gradient(135deg,#0a0a12,#1a1a2e)"></div>
+              <div class="demo-preset" style="background:linear-gradient(135deg,#d4940c,#e04848)"></div>
+              <div class="demo-preset" style="background:linear-gradient(135deg,#0d7377,#14a3a8)"></div>
+              <div class="demo-preset" style="background:linear-gradient(135deg,#1a472a,#2d6a4f)"></div>
+              <div class="demo-preset" style="background:linear-gradient(135deg,#2d1b69,#5b21b6)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3: System Monitoring -->
+    <div class="showcase" data-r>
+      <div class="showcase-text">
+        <span class="t-label">System</span>
+        <h2>Deep system monitoring.</h2>
+        <p>CPU, memory, disk, network, GPU utilization, temperature sensors, top processes, and Bluetooth device batteries. Everything iStat Menus offers, built natively.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Per-core CPU with sparkline graphs</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>40+ temperature sensor readings via SMC</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>AirPods, Magic Mouse, keyboard battery levels</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Top processes sorted by CPU or memory</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="demo-procs">
+            <div class="demo-proc-header">
+              <span>Process</span>
+              <span>CPU</span>
+              <span>Memory</span>
+              <span>Threads</span>
+            </div>
+            <div class="demo-proc-row">
+              <span style="color:var(--text)">Xcode</span>
+              <span style="color:var(--red)">34.2%</span>
+              <span>2.1 GB</span>
+              <span>48</span>
+              <div class="demo-proc-bar"><div class="demo-proc-bar-fill" style="width:34%;background:var(--red)"></div></div>
+            </div>
+            <div class="demo-proc-row">
+              <span style="color:var(--text)">Safari</span>
+              <span style="color:var(--amber-b)">12.8%</span>
+              <span>1.4 GB</span>
+              <span>31</span>
+              <div class="demo-proc-bar"><div class="demo-proc-bar-fill" style="width:13%;background:var(--amber-b)"></div></div>
+            </div>
+            <div class="demo-proc-row">
+              <span style="color:var(--text)">Slack</span>
+              <span style="color:var(--green)">4.1%</span>
+              <span>820 MB</span>
+              <span>22</span>
+              <div class="demo-proc-bar"><div class="demo-proc-bar-fill" style="width:4%;background:var(--green)"></div></div>
+            </div>
+            <div class="demo-proc-row">
+              <span style="color:var(--text)">Docker</span>
+              <span style="color:var(--green)">2.3%</span>
+              <span>640 MB</span>
+              <span>16</span>
+              <div class="demo-proc-bar"><div class="demo-proc-bar-fill" style="width:2%;background:var(--green)"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4: xbar Scripts -->
+    <div class="showcase flip" data-r>
+      <div class="showcase-text">
+        <span class="t-label" style="color:var(--purple)">Extensible</span>
+        <h2>xbar script engine.</h2>
+        <p>Run any shell script and display the output in your menu bar. Full compatibility with the xbar/SwiftBar plugin format. Thousands of community scripts work out of the box.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Bash, Zsh, Python, Ruby, Node - any language</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Color, font, icon, href pipe parameters</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Nested submenus and separator support</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Security hardened: shell whitelist, path validation</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="code-block" style="border:none;border-radius:0">
+            <div class="code-block-header" style="border-radius:0">
+              <div class="code-block-dot red"></div>
+              <div class="code-block-dot yellow"></div>
+              <div class="code-block-dot green"></div>
+              <span class="code-block-title">deploy-status.5m.sh</span>
+            </div>
+            <pre style="padding:20px;font-family:var(--mono);font-size:12.5px;line-height:1.8;color:var(--text2)"><span class="cm">#!/bin/bash</span>
+
+<span class="fn">echo</span> <span class="str">"Deploy: Live | color=green sfimage=checkmark.circle"</span>
+<span class="fn">echo</span> <span class="str">"---"</span>
+<span class="fn">echo</span> <span class="str">"Last deploy: 2m ago | color=#aaa"</span>
+<span class="fn">echo</span> <span class="str">"Commit: fix auth flow | size=12"</span>
+<span class="fn">echo</span> <span class="str">"---"</span>
+<span class="fn">echo</span> <span class="str">"Open Dashboard | href=https://app.vercel.com"</span>
+<span class="fn">echo</span> <span class="str">"--Production | color=green"</span>
+<span class="fn">echo</span> <span class="str">"--Preview | color=#efaa1e"</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5: Profiles -->
+    <div class="showcase" data-r>
+      <div class="showcase-text">
+        <span class="t-label">Workflow</span>
+        <h2>Widget profiles.</h2>
+        <p>Save your entire widget configuration as a named profile. Switch between Work, Home, and Presentation setups with a single click.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Built-in presets: Minimal, Developer, Trader, Full</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Save custom profiles with any combination</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Instant switch, no restart needed</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Persists across app restarts</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="demo-profiles">
+            <div class="demo-profile active">
+              <div class="demo-profile-dot" style="background:var(--amber-b)"></div>
+              <div class="demo-profile-name">Work</div>
+              <div class="demo-profile-count">8 widgets</div>
+            </div>
+            <div class="demo-profile">
+              <div class="demo-profile-dot" style="background:var(--teal)"></div>
+              <div class="demo-profile-name">Home</div>
+              <div class="demo-profile-count">5 widgets</div>
+            </div>
+            <div class="demo-profile">
+              <div class="demo-profile-dot" style="background:var(--purple)"></div>
+              <div class="demo-profile-name">Trading</div>
+              <div class="demo-profile-count">12 widgets</div>
+            </div>
+            <div class="demo-profile">
+              <div class="demo-profile-dot" style="background:var(--text3)"></div>
+              <div class="demo-profile-name">Presentation</div>
+              <div class="demo-profile-count">2 widgets</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6: Menu Bar Management -->
+    <div class="showcase flip" data-r>
+      <div class="showcase-text">
+        <span class="t-label" style="color:var(--teal)">Organization</span>
+        <h2>Menu bar management.</h2>
+        <p>Hide, show, and reorder your menu bar items. Auto-hide on a timer, reveal on hover. Everything Bartender does, without the separate app.</p>
+        <ul class="showcase-list">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Drag to reorder widgets</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Toggle visibility per widget</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Auto-hide with configurable timer</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Hover to reveal hidden items</li>
+        </ul>
+      </div>
+      <div class="showcase-visual">
+        <div class="vis-frame">
+          <div class="demo-bar-items">
+            <div class="demo-bar-item" style="color:var(--green)">AAPL</div>
+            <div class="demo-bar-item">23% CPU</div>
+            <div class="demo-bar-item" style="color:var(--amber-b)">25:00</div>
+            <div class="demo-bar-divider"></div>
+            <div class="demo-bar-item hidden">72F</div>
+            <div class="demo-bar-item hidden">EUR/USD</div>
+          </div>
+          <div class="demo-vis-controls">
+            <div class="demo-vis-btn active">Visible</div>
+            <div class="demo-vis-btn">Hidden</div>
+            <div class="demo-vis-btn">Always Show</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- CTA -->
+<section style="padding:60px 0 140px;text-align:center;position:relative">
+  <div class="divider" style="margin-bottom:80px"></div>
+  <div class="container" data-r>
+    <h2 class="t-heading">See something you <span class="t-gradient">like?</span></h2>
+    <p class="t-body-lg" style="max-width:420px;margin:12px auto 40px">All features included. No premium tier, no paywall.</p>
+    <div class="btn-row" style="justify-content:center">
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download for macOS
+      </a>
+      <a href="widgets.html" class="btn btn-secondary">Browse all 12 widgets</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand"><img src="icon.png" alt="">Barista</div>
+      <div class="footer-links">
+        <a href="https://github.com/noamsmall18/barista">Source</a>
+        <a href="https://github.com/noamsmall18/barista/releases">Releases</a>
+        <a href="https://github.com/noamsmall18/barista/blob/main/LICENSE">MIT License</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+const revealEls = document.querySelectorAll('[data-r],[data-r-stagger],[data-r-scale]');
+const ro = new IntersectionObserver(es => {
+  es.forEach(e => { if(e.isIntersecting){e.target.classList.add('v');ro.unobserve(e.target)} })
+}, {threshold:.05, rootMargin:'0px 0px 50px 0px'});
+revealEls.forEach(el => {
+  const r = el.getBoundingClientRect();
+  if(r.top < window.innerHeight && r.bottom > 0) { el.classList.add('v'); }
+  else { ro.observe(el); }
+});
+
+document.querySelectorAll('.card,.card-glow,.bento-card,.vis-frame').forEach(card => {
+  card.addEventListener('mousemove', e => {
+    const r = card.getBoundingClientRect();
+    card.style.setProperty('--mouse-x', (e.clientX - r.left) + 'px');
+    card.style.setProperty('--mouse-y', (e.clientY - r.top) + 'px');
+  });
+});
+</script>
+</body>
+</html>

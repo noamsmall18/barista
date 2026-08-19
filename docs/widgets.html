@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Widgets - Barista</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="stylesheet" href="style.css">
+<style>
+/* ==============================
+   Widgets - Hero
+   ============================== */
+.w-hero {
+  position: relative;
+  padding: calc(var(--nav-h) + 100px) 0 60px;
+  text-align: center;
+  overflow: hidden;
+}
+.w-hero-glow {
+  position: absolute;
+  top: -150px; left: 50%; transform: translateX(-50%);
+  width: 700px; height: 500px;
+  background: radial-gradient(ellipse, rgba(212,148,12,.05), transparent 70%);
+  pointer-events: none;
+}
+.w-hero .t-display { margin-bottom: 16px; }
+.w-hero .t-body-lg { max-width: 460px; margin: 0 auto; }
+
+/* ==============================
+   Widgets - Filter
+   ============================== */
+.filter-bar {
+  position: sticky;
+  top: var(--nav-h);
+  z-index: 50;
+  backdrop-filter: blur(20px) saturate(1.4);
+  -webkit-backdrop-filter: blur(20px) saturate(1.4);
+  background: rgba(2,2,4,.8);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 0;
+  margin-bottom: 48px;
+}
+.filter-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.filter-inner::-webkit-scrollbar { display: none; }
+
+.filter-btn {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-family: var(--font);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all .2s;
+  white-space: nowrap;
+}
+.filter-btn:hover { color: var(--text2); background: var(--surface); border-color: var(--border); }
+.filter-btn.active {
+  color: var(--amber-b);
+  background: var(--amber-dim);
+  border-color: rgba(229,164,15,.12);
+}
+.filter-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text3);
+  padding-left: 16px;
+}
+.filter-count span { color: var(--text2); }
+
+/* ==============================
+   Widgets - Grid
+   ============================== */
+.widget-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.widget-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 24px;
+  transition: all .35s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+.widget-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity .35s;
+  background: radial-gradient(400px circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255,255,255,.025), transparent 40%);
+}
+.widget-card:hover::before { opacity: 1; }
+.widget-card:hover {
+  border-color: var(--border-h);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,.25);
+}
+
+.widget-card-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.widget-card-icon {
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.widget-card-icon svg { width: 18px; height: 18px; }
+.widget-card-icon.amber { background: var(--amber-dim); border: 1px solid rgba(229,164,15,.12); color: var(--amber-b); }
+.widget-card-icon.teal { background: var(--teal-dim); border: 1px solid rgba(30,201,174,.12); color: var(--teal); }
+
+.widget-card-title {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -.01em;
+}
+.widget-card-cat {
+  font-size: 11px;
+  color: var(--text3);
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+.widget-card-desc {
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--text2);
+  margin-bottom: 14px;
+}
+
+.widget-card-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.widget-card-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 100px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text3);
+}
+
+@media (max-width: 640px) {
+  .widget-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="ambient" style="position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden">
+  <div style="position:absolute;border-radius:50%;filter:blur(100px);width:500px;height:500px;top:-5%;right:15%;background:radial-gradient(circle,rgba(229,164,15,.06),transparent 70%);animation:orb-float 20s ease-in-out infinite alternate"></div>
+  <div style="position:absolute;border-radius:50%;filter:blur(100px);width:400px;height:400px;bottom:15%;left:10%;background:radial-gradient(circle,rgba(147,102,255,.04),transparent 70%);animation:orb-float 22s ease-in-out infinite alternate;animation-delay:-9s"></div>
+</div>
+<style>@keyframes orb-float{0%{transform:translate(0,0) scale(1)}50%{transform:translate(30px,-20px) scale(1.04)}100%{transform:translate(-15px,25px) scale(.97)}}</style>
+<div class="grid-bg"></div>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="container">
+    <div class="nav-left">
+      <a href="./" class="nav-brand"><img src="icon.png" alt="Barista">Barista</a>
+      <ul class="nav-menu" id="navMenu">
+        <li><a href="./">Home</a></li>
+        <li><a href="features.html">Features</a></li>
+        <li><a href="widgets.html" class="active">Widgets</a></li>
+        <li><a href="developers.html">Developers</a></li>
+      </ul>
+    </div>
+    <div class="nav-right">
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="nav-gh">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
+      <button class="nav-toggle" onclick="document.getElementById('navMenu').classList.toggle('open')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="w-hero">
+  <div class="container">
+    <h1 class="t-display" data-r><span class="t-gradient">12</span> premium widgets.</h1>
+    <p class="t-body-lg" data-r>Every widget is carefully crafted, independently configurable, and built with native Swift. Quality over quantity.</p>
+  </div>
+</section>
+
+<!-- Filter -->
+<div class="filter-bar">
+  <div class="container">
+    <div class="filter-inner">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="finance">Finance</button>
+      <button class="filter-btn" data-filter="system">System</button>
+      <button class="filter-btn" data-filter="weather">Weather</button>
+      <button class="filter-btn" data-filter="productivity">Productivity</button>
+      <button class="filter-btn" data-filter="music">Music & Media</button>
+      <button class="filter-btn" data-filter="time">Time & Calendar</button>
+      <button class="filter-btn" data-filter="sports">Sports</button>
+      <button class="filter-btn" data-filter="utility">Utility</button>
+      <span class="filter-count">Showing <span id="wCount">12</span></span>
+    </div>
+  </div>
+</div>
+
+<!-- Widget Grid -->
+<section style="padding-bottom:120px">
+  <div class="container">
+    <div class="widget-grid" id="widgetGrid">
+
+      <!-- Finance -->
+      <div class="widget-card" data-cat="finance">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg></div><div><div class="widget-card-title">Market Ticker</div><div class="widget-card-cat">Finance</div></div></div>
+        <div class="widget-card-desc">Live stock and crypto prices in a scrolling ticker. Color-coded gains and losses with real-time updates.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">Yahoo Finance</span><span class="widget-card-tag">CoinGecko</span><span class="widget-card-tag">Scrolling</span></div>
+      </div>
+
+      <!-- System -->
+      <div class="widget-card" data-cat="system">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg></div><div><div class="widget-card-title">CPU Monitor</div><div class="widget-card-cat">System</div></div></div>
+        <div class="widget-card-desc">Real-time CPU usage percentage with per-core breakdown and sparkline graphs in dropdown.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">host_processor_info</span><span class="widget-card-tag">Sparkline</span></div>
+      </div>
+      <div class="widget-card" data-cat="system">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12H2M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z"/></svg></div><div><div class="widget-card-title">RAM Monitor</div><div class="widget-card-cat">System</div></div></div>
+        <div class="widget-card-desc">Physical memory usage with used/total display. Shows memory pressure and top consumers in dropdown.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">vm_statistics</span></div>
+      </div>
+      <div class="widget-card" data-cat="system">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div><div class="widget-card-title">Network Speed</div><div class="widget-card-cat">System</div></div></div>
+        <div class="widget-card-desc">Upload and download speeds in real-time. Shows bytes transferred per interface with live updates.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">getifaddrs</span><span class="widget-card-tag">Real-time</span></div>
+      </div>
+      <div class="widget-card" data-cat="system">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="6" width="22" height="12" rx="2"/><line x1="23" y1="13" x2="23" y2="11"/></svg></div><div><div class="widget-card-title">Battery Health</div><div class="widget-card-cat">System</div></div></div>
+        <div class="widget-card-desc">Battery percentage, charging state, time remaining, cycle count, and overall health status.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">IOPowerSources</span></div>
+      </div>
+
+      <!-- Weather -->
+      <div class="widget-card" data-cat="weather">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg></div><div><div class="widget-card-title">Weather</div><div class="widget-card-cat">Weather</div></div></div>
+        <div class="widget-card-desc">Current temperature, conditions, and extended forecast. Humidity, wind, and feels-like in dropdown.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">Open-Meteo</span><span class="widget-card-tag">Free</span></div>
+      </div>
+
+      <!-- Productivity -->
+      <div class="widget-card" data-cat="productivity">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div><div class="widget-card-title">Focus Timer</div><div class="widget-card-cat">Productivity</div></div></div>
+        <div class="widget-card-desc">Pomodoro timer with configurable work/break intervals. Visual countdown in the menu bar with notifications.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">Local</span><span class="widget-card-tag">Notifications</span></div>
+      </div>
+      <div class="widget-card" data-cat="productivity">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div><div class="widget-card-title">Calendar Next</div><div class="widget-card-cat">Productivity</div></div></div>
+        <div class="widget-card-desc">Shows your next calendar event with time remaining. One-click join for Zoom, Meet, and Teams links.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">EventKit</span><span class="widget-card-tag">Meeting Join</span></div>
+      </div>
+
+      <!-- Music & Media -->
+      <div class="widget-card" data-cat="music">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div><div><div class="widget-card-title">Now Playing</div><div class="widget-card-cat">Music & Media</div></div></div>
+        <div class="widget-card-desc">Shows the currently playing track from Apple Music or Spotify. Click to play/pause, scroll for volume.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">MRMediaRemote</span><span class="widget-card-tag">Interactive</span></div>
+      </div>
+
+      <!-- Time & Calendar -->
+      <div class="widget-card" data-cat="time">
+        <div class="widget-card-head"><div class="widget-card-icon amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div><div class="widget-card-title">World Clock</div><div class="widget-card-cat">Time & Calendar</div></div></div>
+        <div class="widget-card-desc">Multiple time zones with city names. Time scroller and search across 15K+ cities worldwide.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">TimeZone</span><span class="widget-card-tag">Multi-instance</span></div>
+      </div>
+
+      <!-- Sports -->
+      <div class="widget-card" data-cat="sports">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 100-12"/></svg></div><div><div class="widget-card-title">Live Scores</div><div class="widget-card-cat">Sports</div></div></div>
+        <div class="widget-card-desc">Real-time NBA, NFL, MLB, NHL, and soccer scores. Auto-cycles through active games.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">ESPN API</span><span class="widget-card-tag">Cycleable</span></div>
+      </div>
+
+      <!-- Utility -->
+      <div class="widget-card" data-cat="utility">
+        <div class="widget-card-head"><div class="widget-card-icon teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 8h1a4 4 0 110 8h-1M3 8h14v9a4 4 0 01-4 4H7a4 4 0 01-4-4V8zM6 2v4M10 2v4M14 2v4"/></svg></div><div><div class="widget-card-title">Keep Awake</div><div class="widget-card-cat">Utility</div></div></div>
+        <div class="widget-card-desc">Prevent your Mac from sleeping. Configurable duration with countdown timer. One-click toggle.</div>
+        <div class="widget-card-tags"><span class="widget-card-tag">IOPMAssertion</span></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section style="padding:0 0 140px;text-align:center;position:relative">
+  <div class="divider" style="margin-bottom:80px"></div>
+  <div class="container" data-r>
+    <h2 class="t-heading">All 12 premium widgets. <span class="t-gradient">Free.</span></h2>
+    <p class="t-body-lg" style="max-width:400px;margin:12px auto 40px">No premium tier. No paywalls. Every widget included.</p>
+    <div class="btn-row" style="justify-content:center">
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download for macOS
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand"><img src="icon.png" alt="">Barista</div>
+      <div class="footer-links">
+        <a href="https://github.com/noamsmall18/barista">Source</a>
+        <a href="https://github.com/noamsmall18/barista/releases">Releases</a>
+        <a href="https://github.com/noamsmall18/barista/blob/main/LICENSE">MIT License</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+/* Reveal */
+const revealEls = document.querySelectorAll('[data-r],[data-r-stagger],[data-r-scale]');
+const ro = new IntersectionObserver(es => {
+  es.forEach(e => { if(e.isIntersecting){e.target.classList.add('v');ro.unobserve(e.target)} })
+}, {threshold:.05, rootMargin:'0px 0px 50px 0px'});
+revealEls.forEach(el => {
+  const r = el.getBoundingClientRect();
+  if(r.top < window.innerHeight && r.bottom > 0) { el.classList.add('v'); }
+  else { ro.observe(el); }
+});
+
+/* Card mouse tracking */
+document.querySelectorAll('.widget-card').forEach(card => {
+  card.addEventListener('mousemove', e => {
+    const r = card.getBoundingClientRect();
+    card.style.setProperty('--mouse-x', (e.clientX - r.left) + 'px');
+    card.style.setProperty('--mouse-y', (e.clientY - r.top) + 'px');
+  });
+});
+
+/* Filtering */
+const btns = document.querySelectorAll('.filter-btn');
+const cards = document.querySelectorAll('.widget-card');
+const countEl = document.getElementById('wCount');
+
+btns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    btns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const f = btn.dataset.filter;
+    let shown = 0;
+    cards.forEach(c => {
+      const match = f === 'all' || c.dataset.cat === f;
+      c.style.display = match ? '' : 'none';
+      if(match) shown++;
+    });
+    countEl.textContent = shown;
+  });
+});
+</script>
+</body>
+</html>

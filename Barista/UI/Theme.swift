@@ -91,18 +91,14 @@ struct Theme {
 
     static func colorForCategory(_ category: WidgetCategory) -> NSColor {
         switch category {
-        case .timeCalendar: return brandCyan
-        case .weather: return blue
         case .finance: return green
         case .system: return orange
+        case .weather: return blue
         case .productivity: return brandAmber
         case .musicMedia: return purple
-        case .social: return brandCyanBright
-        case .funLifestyle: return yellow
+        case .timeCalendar: return brandCyan
         case .sports: return red
-        case .developer: return green
         case .utility: return textMuted
-        case .health: return NSColor(red: 0.90, green: 0.40, blue: 0.50, alpha: 1)
         }
     }
 
@@ -141,5 +137,20 @@ struct Theme {
         layer.shadowRadius = radius
         layer.shadowOpacity = 0.6
         layer.shadowOffset = .zero
+    }
+}
+
+// MARK: - Market status colour
+//
+// Kept here rather than on MarketStatus itself: the status is a domain fact
+// about the exchange clock, and tying it to AppKit made it impossible to test
+// the session logic without dragging the whole UI layer along.
+extension MarketStatus {
+    var color: NSColor {
+        switch self {
+        case .open: return NSColor(red: 0.25, green: 0.85, blue: 0.55, alpha: 1)
+        case .preMarket, .afterHours: return Theme.brandAmber
+        case .closed: return Theme.textMuted
+        }
     }
 }

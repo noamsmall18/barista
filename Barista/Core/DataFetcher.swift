@@ -49,11 +49,24 @@ class DataFetcher {
         fetch(FetchRequest(url: url, maxAge: maxAge), completion: completion)
     }
 
+    /// Delivers every completion on the main queue.
+    ///
+    /// Widgets are main-thread objects: their callbacks mutate widget state and
+    /// touch UI. Handing results back on URLSession's queue made every caller
+    /// responsible for hopping threads itself, and a caller that forgot read a
+    /// shared array while the main thread was writing it, which corrupted the
+    /// array badly enough to abort the process. Delivering on main removes the
+    /// whole class of mistake instead of fixing it one call site at a time.
+    private static func deliver(_ result: Result<Data, Error>,
+                                to completion: @escaping (Result<Data, Error>) -> Void) {
+        DispatchQueue.main.async { completion(result) }
+    }
+
     /// Full fetch with method, headers, body, and caching.
     func fetch(_ request: FetchRequest, completion: @escaping (Result<Data, Error>) -> Void) {
         // Enforce HTTPS for all requests
         guard let scheme = request.url.scheme?.lowercased(), scheme == "https" else {
-            completion(.failure(URLError(.badURL, userInfo: [NSLocalizedDescriptionKey: "Only HTTPS requests are allowed"])))
+            DataFetcher.deliver(.failure(URLError(.badURL, userInfo: [NSLocalizedDescriptionKey: "Only HTTPS requests are allowed"])), to: completion)
             return
         }
 
@@ -64,7 +77,7 @@ class DataFetcher {
         cacheQueue.sync { cached = cache[key] }
 
         if let cached = cached, Date().timeIntervalSince(cached.timestamp) < request.maxAge {
-            completion(.success(cached.data))
+            DataFetcher.deliver(.success(cached.data), to: completion)
             return
         }
 
@@ -78,9 +91,9 @@ class DataFetcher {
         session.dataTask(with: urlReq) { [weak self] data, response, error in
             if let error = error {
                 if let cached = cached {
-                    completion(.success(cached.data))
+                    DataFetcher.deliver(.success(cached.data), to: completion)
                 } else {
-                    completion(.failure(error))
+                    DataFetcher.deliver(.failure(error), to: completion)
                 }
                 return
             }
@@ -90,20 +103,20 @@ class DataFetcher {
             // response and cached, which quietly served garbage to the parsers
             // for the whole cache window.
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                completion(.failure(HTTPError(statusCode: http.statusCode,
-                                              host: request.url.host ?? request.url.absoluteString)))
+                DataFetcher.deliver(.failure(HTTPError(statusCode: http.statusCode,
+                                                 host: request.url.host ?? request.url.absoluteString)), to: completion)
                 return
             }
 
             guard let data = data else {
-                completion(.failure(URLError(.badServerResponse)))
+                DataFetcher.deliver(.failure(URLError(.badServerResponse)), to: completion)
                 return
             }
 
             self?.cacheQueue.sync {
                 self?.cache[key] = CachedResponse(data: data, timestamp: Date())
             }
-            completion(.success(data))
+            DataFetcher.deliver(.success(data), to: completion)
         }.resume()
     }
 

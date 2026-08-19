@@ -21,3 +21,10 @@ dist/
 # Legacy
 StockTicker/
 StockTicker.xcodeproj/
+
+# Local app binary + preference backups. Never commit: these are large and the
+# preference dumps contain real portfolio holdings and cost basis.
+app-binary-backups/
+
+# Stray scratch file
+Barista/Widgets/Finance/from selenium import webdriver.py

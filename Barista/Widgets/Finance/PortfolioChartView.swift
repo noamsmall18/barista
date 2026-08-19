@@ -13,6 +13,9 @@ final class PortfolioChartView: NSView {
     struct Sample {
         let date: Date
         let value: Double
+        /// For benchmark samples, the index's own price before rebasing, so the
+        /// hover readout can show what SPY actually cost as well as its move.
+        var raw: Double? = nil
     }
 
     /// The portfolio's own value over the selected range.
@@ -89,6 +92,47 @@ final class PortfolioChartView: NSView {
         return NSPoint(x: x, y: r.minY + r.height * CGFloat(frac))
     }
 
+    /// Index of the portfolio sample closest in time to `date`.
+    ///
+    /// The benchmark usually has fewer points than the portfolio - only days the
+    /// index also traded - so spacing it evenly across the width would stretch it
+    /// and put it out of step. Mapping onto the portfolio's own index space keeps
+    /// the two lines aligned and keeps weekends compressed the same way.
+    private func nearestSampleIndex(to date: Date) -> Int {
+        guard samples.count > 1 else { return 0 }
+        let t = date.timeIntervalSince1970
+        var lo = 0, hi = samples.count - 1
+        if t <= samples[0].date.timeIntervalSince1970 { return 0 }
+        if t >= samples[hi].date.timeIntervalSince1970 { return hi }
+        while lo + 1 < hi {
+            let mid = (lo + hi) / 2
+            if samples[mid].date.timeIntervalSince1970 <= t { lo = mid } else { hi = mid }
+        }
+        let dLo = abs(samples[lo].date.timeIntervalSince1970 - t)
+        let dHi = abs(samples[hi].date.timeIntervalSince1970 - t)
+        return dLo <= dHi ? lo : hi
+    }
+
+    private func benchmarkPoint(_ s: Sample) -> NSPoint {
+        let r = plotRect
+        let x = point(at: nearestSampleIndex(to: s.date), in: samples).x
+        let span = max(0.0001, highest - lowest)
+        let frac = (s.value - lowest) / span
+        return NSPoint(x: x, y: r.minY + r.height * CGFloat(frac))
+    }
+
+    private func benchmarkPath() -> NSBezierPath {
+        let p = NSBezierPath()
+        guard let benchmark, !benchmark.isEmpty else { return p }
+        p.lineJoinStyle = .round
+        p.lineCapStyle = .round
+        for (i, s) in benchmark.enumerated() {
+            let pt = benchmarkPoint(s)
+            if i == 0 { p.move(to: pt) } else { p.line(to: pt) }
+        }
+        return p
+    }
+
     private func path(for series: [Sample]) -> NSBezierPath {
         let p = NSBezierPath()
         guard !series.isEmpty else { return p }
@@ -136,7 +180,7 @@ final class PortfolioChartView: NSView {
 
         // Benchmark sits under the portfolio line so it never obscures it.
         if let benchmark, benchmark.count >= 2 {
-            let bp = path(for: benchmark)
+            let bp = benchmarkPath()
             bp.lineWidth = 1
             bp.setLineDash([3, 2], count: 2, phase: 0)
             Theme.textMuted.withAlphaComponent(0.55).setStroke()
@@ -252,20 +296,66 @@ final class PortfolioChartView: NSView {
         line.append(NSAttributedString(string: String(format: "%@%.1f%%", pct >= 0 ? "+" : "", pct),
                                        attributes: deltaAttrs))
 
+        // Second line: where the benchmark stood at the same moment, both its own
+        // price and its move over the range, so the two are directly comparable.
+        var benchLine: NSAttributedString?
+        if let benchmark, let first = benchmark.first, first.value > 0,
+           let match = benchmarkSample(nearestTo: sample.date) {
+            let bPct = (match.value - first.value) / first.value * 100
+            let b = NSMutableAttributedString()
+            b.append(NSAttributedString(string: benchmarkLabel + "  ", attributes: [
+                .font: NSFont.systemFont(ofSize: 8.5, weight: .semibold),
+                .foregroundColor: Theme.brandCyan.withAlphaComponent(0.9)]))
+            if let raw = match.raw {
+                b.append(NSAttributedString(string: Self.money(raw) + "  ", attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .medium),
+                    .foregroundColor: Theme.textMuted]))
+            }
+            b.append(NSAttributedString(string: String(format: "%@%.1f%%", bPct >= 0 ? "+" : "", bPct),
+                                        attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .semibold),
+                .foregroundColor: bPct >= 0 ? Theme.green.withAlphaComponent(0.85)
+                                            : Theme.red.withAlphaComponent(0.85)]))
+            benchLine = b
+
+            // Mark the benchmark line at the same moment.
+            let bp = benchmarkPoint(match)
+            let bDot = NSBezierPath(ovalIn: NSRect(x: bp.x - 2, y: bp.y - 2, width: 4, height: 4))
+            Theme.brandCyan.withAlphaComponent(0.8).setFill()
+            bDot.fill()
+        }
+
         let size = line.size()
-        var boxX = pt.x - size.width / 2 - 5
-        boxX = max(0, min(boxX, bounds.width - size.width - 10))
-        let boxRect = NSRect(x: boxX, y: bounds.height - size.height - 3,
-                             width: size.width + 10, height: size.height + 2)
+        let bSize = benchLine?.size() ?? .zero
+        let boxW = max(size.width, bSize.width) + 10
+        let boxH = size.height + (benchLine != nil ? bSize.height + 2 : 0) + 2
+
+        var boxX = pt.x - boxW / 2
+        boxX = max(0, min(boxX, bounds.width - boxW))
+        let boxRect = NSRect(x: boxX, y: bounds.height - boxH - 2, width: boxW, height: boxH)
 
         let bg = NSBezierPath(roundedRect: boxRect, xRadius: 4, yRadius: 4)
-        Theme.bg.withAlphaComponent(0.92).setFill()
+        Theme.bg.withAlphaComponent(0.94).setFill()
         bg.fill()
         Theme.cardBorder.setStroke()
         bg.lineWidth = 0.5
         bg.stroke()
 
-        line.draw(at: NSPoint(x: boxRect.minX + 5, y: boxRect.minY + 1))
+        if let benchLine {
+            line.draw(at: NSPoint(x: boxRect.minX + 5, y: boxRect.minY + bSize.height + 2))
+            benchLine.draw(at: NSPoint(x: boxRect.minX + 5, y: boxRect.minY + 1))
+        } else {
+            line.draw(at: NSPoint(x: boxRect.minX + 5, y: boxRect.minY + 1))
+        }
+    }
+
+    /// Benchmark sample closest in time to `date`, since the benchmark only has
+    /// points for days the index also traded.
+    private func benchmarkSample(nearestTo date: Date) -> Sample? {
+        guard let benchmark, !benchmark.isEmpty else { return nil }
+        return benchmark.min {
+            abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
+        }
     }
 
     // MARK: - Hover tracking

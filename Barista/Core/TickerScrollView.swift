@@ -109,6 +109,25 @@ class TickerScrollView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    override func removeFromSuperview() {
+        if let dl = displayLink { CVDisplayLinkStop(dl); displayLink = nil }
+        super.removeFromSuperview()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            // Removed from window hierarchy - pause display link
+            if let dl = displayLink { CVDisplayLinkStop(dl) }
+        } else if let dl = displayLink, !CVDisplayLinkIsRunning(dl) {
+            // Re-added to a window - resume
+            CVDisplayLinkStart(dl)
+        } else if displayLink == nil {
+            // Display link was fully torn down - recreate
+            startDisplayLink()
+        }
+    }
+
     deinit {
         if let dl = displayLink { CVDisplayLinkStop(dl) }
     }

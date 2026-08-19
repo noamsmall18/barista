@@ -10,6 +10,7 @@ class MenuBarOverlay {
     private var appearance: MenuBarAppearance = .default
     private var screenObserver: Any?
     private var spaceObserver: Any?
+    private var appActivateObserver: Any?
     private var fullscreenObserver: Any?
 
     private init() {}
@@ -215,6 +216,17 @@ class MenuBarOverlay {
                 self?.handleSpaceChange()
             }
         }
+
+        // App activation - re-assert overlay when switching apps
+        appActivateObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            // Small delay to let the menu bar redraw, then bring overlay back on top
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self?.reassertOverlays()
+            }
+        }
     }
 
     private func stopObserving() {
@@ -226,43 +238,25 @@ class MenuBarOverlay {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             spaceObserver = nil
         }
+        if let observer = appActivateObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            appActivateObserver = nil
+        }
+    }
+
+    /// Bring all overlay windows back to front without recreating them.
+    private func reassertOverlays() {
+        guard appearance.isEnabled else { return }
+        for (screen, window) in overlayWindows {
+            positionWindow(window, on: screen)
+            window.orderFrontRegardless()
+        }
     }
 
     private func handleSpaceChange() {
-        // Check if any window is fullscreen - if so, hide overlay on that screen
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return }
-        let pid = frontApp.processIdentifier
-
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return }
-
-        var fullscreenScreens: Set<CGDirectDisplayID> = []
-        for info in windowList {
-            guard let ownerPID = info[kCGWindowOwnerPID as String] as? Int32,
-                  ownerPID == pid,
-                  let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat] else { continue }
-
-            // Check if window covers entire screen
-            for screen in NSScreen.screens {
-                let screenFrame = screen.frame
-                if let w = boundsDict["Width"], let h = boundsDict["Height"],
-                   w >= screenFrame.width && h >= screenFrame.height {
-                    if let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
-                        fullscreenScreens.insert(displayID)
-                    }
-                }
-            }
-        }
-
-        // Show/hide overlays based on fullscreen state
-        for (screen, window) in overlayWindows {
-            if let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID {
-                if fullscreenScreens.contains(displayID) {
-                    window.orderOut(nil)
-                } else {
-                    window.orderFrontRegardless()
-                }
-            }
-        }
+        // Always re-assert overlays on space change so the color persists
+        // even in fullscreen. The overlay uses .canJoinAllSpaces + .stationary
+        // so it follows the menu bar wherever it appears.
+        reassertOverlays()
     }
 }

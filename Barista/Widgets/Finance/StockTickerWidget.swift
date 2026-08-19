@@ -34,6 +34,7 @@ struct MarketQuote: Codable, Equatable {
         case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
+        case regularStart, regularEnd
     }
     var marketCap: Double?
     var fiftyTwoWeekHigh: Double?
@@ -47,6 +48,26 @@ struct MarketQuote: Codable, Equatable {
     var postMarketPrice: Double?
     var postMarketChange: Double?
     var marketState: String?
+
+    /// Regular-session window for this quote's day, as Unix seconds. Carried on
+    /// the quote so the intraday bars can be split by session anywhere they are
+    /// consumed, rather than only where they were parsed.
+    var regularStart: Double = 0
+    var regularEnd: Double = 0
+
+    var sessionBoundaries: SessionSplitter.Boundaries {
+        .init(regularStart: regularStart, regularEnd: regularEnd)
+    }
+
+    /// This day's bars, separated into pre-market, regular and post-market.
+    var sessionSplit: SessionSplit {
+        let useMinutes = minuteCloses.count > sparkline.count
+            && minuteTimes.count == minuteCloses.count
+        let closes = useMinutes ? minuteCloses : sparkline
+        let times = useMinutes ? minuteTimes : sparklineTimes
+        return SessionSplitter.split(closes: closes, times: times,
+                                     boundaries: sessionBoundaries)
+    }
 
     var isUp: Bool { change >= 0 }
 
@@ -87,31 +108,71 @@ struct MarketQuote: Codable, Equatable {
     /// line starts reading as noise rather than detail.
     static let rowChartResolution = 180
 
-    var chartSeries: [Double] {
-        // Prefer the full minute bars, which are held live but never persisted.
-        // The 48-point sparkline is the fallback after a cache restore, before
-        // the first fetch lands.
-        var source = minuteCloses.count > sparkline.count ? minuteCloses : sparkline
-        if source.count > Self.rowChartResolution {
-            let step = Double(source.count - 1) / Double(Self.rowChartResolution - 1)
-            source = (0..<Self.rowChartResolution).map {
-                source[min(Int((Double($0) * step).rounded()), source.count - 1)]
-            }
-        }
-        var series = source.filter { $0.isFinite && $0 > 0 }
-        if series.isEmpty {
+    /// The row chart's points, regular session first and any extended-hours
+    /// bars after it, plus the index where that tail begins.
+    ///
+    /// The two segments are downsampled separately so the boundary lands on an
+    /// exact point rather than being smeared across a shared interval. In
+    /// pre-market the session half is empty by design: the whole line is that
+    /// morning's move, measured from the previous close, and the previous day's
+    /// session is never appended to it.
+    var chartSegments: (points: [Double], breakIndex: Int?) {
+        let (session, extended) = sessionSplit.series(for: marketStatus)
+        var sessionPoints = session.closes.filter { $0.isFinite && $0 > 0 }
+        var extendedPoints = extended.closes.filter { $0.isFinite && $0 > 0 }
+
+        if sessionPoints.isEmpty && extendedPoints.isEmpty {
             if let chartBaseline, chartBaseline > 0, currentPrice > 0 {
-                return [chartBaseline, currentPrice]
+                return ([chartBaseline, currentPrice], nil)
             }
-            return []
+            return ([], nil)
         }
-        if currentPrice > 0 {
-            series[series.count - 1] = currentPrice
+
+        let budget = Self.rowChartResolution
+        if sessionPoints.count + extendedPoints.count > budget {
+            let total = Double(sessionPoints.count + extendedPoints.count)
+            // Give the tail at least a few points so a sharp after-hours move
+            // is still visible next to a full trading day.
+            var extendedBudget = extendedPoints.isEmpty ? 0
+                : max(2, Int((Double(extendedPoints.count) / total) * Double(budget)))
+            extendedBudget = min(extendedBudget, budget / 2)
+            let sessionBudget = budget - extendedBudget
+            sessionPoints = Self.downsample(sessionPoints, to: sessionBudget)
+            extendedPoints = Self.downsample(extendedPoints, to: extendedBudget)
         }
-        if series.count == 1, let chartBaseline, chartBaseline > 0, chartBaseline != series[0] {
-            series.insert(chartBaseline, at: 0)
+
+        // Pin the newest point to the live price so the line ends where the
+        // number beside it says it does.
+        if !extendedPoints.isEmpty, let ext = extendedHours, ext.price > 0 {
+            extendedPoints[extendedPoints.count - 1] = ext.price
+        } else if !sessionPoints.isEmpty, price > 0 {
+            sessionPoints[sessionPoints.count - 1] = price
         }
-        return series
+
+        var points = sessionPoints + extendedPoints
+        let breakIndex = extendedPoints.isEmpty ? nil : sessionPoints.count
+
+        if points.count == 1, let chartBaseline, chartBaseline > 0, chartBaseline != points[0] {
+            points.insert(chartBaseline, at: 0)
+            return (points, breakIndex.map { $0 + 1 })
+        }
+        return (points, breakIndex)
+    }
+
+    var chartSeries: [Double] { chartSegments.points }
+
+    /// Index at which extended-hours bars begin, for renderers that draw them
+    /// differently. Nil when everything on the chart is one session.
+    var chartBreakIndex: Int? { chartSegments.breakIndex }
+
+    private static func downsample(_ values: [Double], to count: Int) -> [Double] {
+        guard count > 0 else { return [] }
+        guard values.count > count else { return values }
+        guard count > 1 else { return [values[values.count - 1]] }
+        let step = Double(values.count - 1) / Double(count - 1)
+        return (0..<count).map {
+            values[min(Int((Double($0) * step).rounded()), values.count - 1)]
+        }
     }
 
     var baselinePrice: Double? {
@@ -156,7 +217,24 @@ struct PortfolioPosition {
     /// which keeps total-return figures hidden rather than showing a fake gain.
     var averageCost: Double? = nil
 
-    var value: Double { quote.currentPrice * quantity }
+    /// Value at the last completed regular-session close.
+    ///
+    /// Deliberately not `currentPrice`: during extended hours that would fold an
+    /// after-hours move into the day's result, and the whole point is to be able
+    /// to see where the session actually finished.
+    var value: Double { quote.price * quantity }
+
+    /// Value including any extended-hours move: the live number, as opposed to
+    /// where the session finished. The menu bar shows this; the portfolio panel
+    /// shows `value` with the extended move broken out beside it.
+    var liveValue: Double { quote.currentPrice * quantity }
+
+    /// What extended-hours trading has done since that close, in dollars.
+    /// Nil while the exchange is open, or when there is no extended print.
+    var extendedPL: Double? {
+        guard quantity > 0, let ext = quote.extendedHours else { return nil }
+        return (ext.price - quote.price) * quantity
+    }
     var baselinePrice: Double { quote.baselinePrice ?? quote.currentPrice }
     var baselineValue: Double { baselinePrice * quantity }
     var dailyPL: Double { value - baselineValue }
@@ -196,6 +274,48 @@ struct PortfolioSnapshot {
     var dailyPercent: Double {
         guard baselineTotal > 0 else { return 0 }
         return dailyPL / baselineTotal * 100
+    }
+
+    // MARK: - Live totals
+    //
+    // `total` and `dailyPL` are the completed session. These add whatever has
+    // traded since, for the at-a-glance menu bar reading where one number has to
+    // answer "what is it worth right now".
+
+    var liveTotal: Double { positions.map(\.liveValue).reduce(0, +) + cash }
+
+    var livePL: Double { liveTotal - baselineTotal }
+
+    var livePercent: Double {
+        guard baselineTotal > 0 else { return 0 }
+        return livePL / baselineTotal * 100
+    }
+
+    /// The extended-hours move across the whole portfolio, kept separate from
+    /// `dailyPL` so the two are never added together by accident.
+    var extendedPL: Double? {
+        let moves = positions.compactMap(\.extendedPL)
+        guard !moves.isEmpty else { return nil }
+        return moves.reduce(0, +)
+    }
+
+    var extendedPercent: Double? {
+        guard let extendedPL, total > 0 else { return nil }
+        return extendedPL / total * 100
+    }
+
+    /// "Pre-market" or "After hours", taken from whichever phase the held
+    /// positions are actually reporting.
+    var extendedLabel: String? {
+        for p in positions {
+            guard p.extendedPL != nil else { continue }
+            switch p.quote.marketStatus {
+            case .preMarket:  return "Pre-market"
+            case .afterHours: return "After hours"
+            default:          continue
+            }
+        }
+        return nil
     }
 
     var winners: Int { positions.filter { $0.dailyPL > 0.005 }.count }
@@ -343,6 +463,30 @@ struct StockTickerConfig: Codable, Equatable {
         set { mutateActive { $0.costBasis = newValue } }
     }
 
+    // MARK: - Ledger writes
+    //
+    // Holdings and cost basis above are a cache of the ledger. Everything that
+    // changes a position goes through here so the two can never disagree.
+
+    mutating func record(_ transaction: Transaction) {
+        mutateActive { $0.record(transaction) }
+    }
+
+    mutating func mutateActivePortfolio(_ body: (inout Portfolio) -> Void) {
+        mutateActive(body)
+    }
+
+    mutating func setQuantity(_ quantity: Double, for symbol: String,
+                              averageCost: Double? = nil, note: String? = nil) {
+        mutateActive { $0.setQuantity(quantity, for: symbol,
+                                      averageCost: averageCost, note: note) }
+    }
+
+    /// Realised profit for the active portfolio.
+    var realizedTotal: Double { activePortfolio?.realizedTotal ?? 0 }
+
+    var tradeHistory: [Transaction] { activePortfolio?.tradeHistory ?? [] }
+
     // Display
     var displayMode: TickerDisplayMode
     var colorMode: TickerColorMode
@@ -358,7 +502,6 @@ struct StockTickerConfig: Codable, Equatable {
     // Data toggles
     var showVolume: Bool
     var showSparklines: Bool
-    var showIndices: Bool
     var showMarketCap: Bool
     var showDayRange: Bool
     var showPERatio: Bool
@@ -400,7 +543,6 @@ struct StockTickerConfig: Codable, Equatable {
         focusCycleSeconds: 5,
         showVolume: true,
         showSparklines: true,
-        showIndices: true,
         showMarketCap: true,
         showDayRange: true,
         showPERatio: false,
@@ -413,7 +555,7 @@ struct StockTickerConfig: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case portfolios, activePortfolioID
         case symbols, coins, holdings, cash, scrollSpeed, coloredTicker, refreshInterval
-        case tickerWidth, cryptoCurrency, showVolume, showSparklines, showIndices, showExtendedHours
+        case tickerWidth, cryptoCurrency, showVolume, showSparklines, showExtendedHours
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
         case historyRange, compareToBenchmark
@@ -427,7 +569,7 @@ struct StockTickerConfig: Codable, Equatable {
          scrollSpeed: Double = 0.3, tickerWidth: Double = 200,
          focusCycleSeconds: Double = 5,
          showVolume: Bool = true, showSparklines: Bool = true,
-         showIndices: Bool = true, showMarketCap: Bool = true,
+         showMarketCap: Bool = true,
          showDayRange: Bool = true, showPERatio: Bool = false,
          sortMode: TickerSortMode = .manual, refreshInterval: TimeInterval = 5,
          cryptoCurrency: String = "usd", priceAlerts: [String: Double] = [:]) {
@@ -440,7 +582,7 @@ struct StockTickerConfig: Codable, Equatable {
         self.scrollSpeed = scrollSpeed; self.tickerWidth = tickerWidth
         self.focusCycleSeconds = focusCycleSeconds
         self.showVolume = showVolume; self.showSparklines = showSparklines
-        self.showIndices = showIndices; self.showMarketCap = showMarketCap
+        self.showMarketCap = showMarketCap
         self.showDayRange = showDayRange; self.showPERatio = showPERatio
         self.sortMode = sortMode; self.refreshInterval = refreshInterval
         self.cryptoCurrency = cryptoCurrency; self.priceAlerts = priceAlerts
@@ -477,7 +619,6 @@ struct StockTickerConfig: Codable, Equatable {
         focusCycleSeconds = try c.decodeIfPresent(Double.self, forKey: .focusCycleSeconds) ?? 5
         showVolume = try c.decodeIfPresent(Bool.self, forKey: .showVolume) ?? true
         showSparklines = try c.decodeIfPresent(Bool.self, forKey: .showSparklines) ?? true
-        showIndices = try c.decodeIfPresent(Bool.self, forKey: .showIndices) ?? true
         showMarketCap = try c.decodeIfPresent(Bool.self, forKey: .showMarketCap) ?? true
         showDayRange = try c.decodeIfPresent(Bool.self, forKey: .showDayRange) ?? true
         showPERatio = try c.decodeIfPresent(Bool.self, forKey: .showPERatio) ?? false
@@ -513,7 +654,6 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(focusCycleSeconds, forKey: .focusCycleSeconds)
         try c.encode(showVolume, forKey: .showVolume)
         try c.encode(showSparklines, forKey: .showSparklines)
-        try c.encode(showIndices, forKey: .showIndices)
         try c.encode(showMarketCap, forKey: .showMarketCap)
         try c.encode(showDayRange, forKey: .showDayRange)
         try c.encode(showPERatio, forKey: .showPERatio)
@@ -551,57 +691,6 @@ let symbolToCoinID: [String: String] = {
 
 // MARK: - Market Status
 
-enum MarketStatus {
-    case preMarket, open, afterHours, closed
-
-    var label: String {
-        switch self {
-        case .preMarket: return "Pre-Market"
-        case .open: return "Market Open"
-        case .afterHours: return "After Hours"
-        case .closed: return "Market Closed"
-        }
-    }
-
-    var color: NSColor {
-        switch self {
-        case .open: return NSColor(red: 0.25, green: 0.85, blue: 0.55, alpha: 1)
-        case .preMarket, .afterHours: return Theme.brandAmber
-        case .closed: return Theme.textMuted
-        }
-    }
-
-    static func current() -> MarketStatus {
-        let et = TimeZone(identifier: "America/New_York")!
-        var cal = Calendar(identifier: .gregorian)
-        cal.timeZone = et
-        let now = Date()
-        let wd = cal.component(.weekday, from: now)
-        if wd == 1 || wd == 7 { return .closed }
-        let t = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
-        if t < 240 { return .closed }
-        if t < 570 { return .preMarket }
-        if t < 960 { return .open }
-        if t < 1200 { return .afterHours }
-        return .closed
-    }
-
-    static func fromYahooMarketState(_ raw: String?) -> MarketStatus? {
-        guard let raw else { return nil }
-        switch raw.uppercased() {
-        case "PRE":
-            return .preMarket
-        case "REGULAR":
-            return .open
-        case "POST":
-            return .afterHours
-        case "CLOSED", "PREPRE", "POSTPOST":
-            return .closed
-        default:
-            return nil
-        }
-    }
-}
 
 // MARK: - Config Changed Notification
 
@@ -756,12 +845,22 @@ class StockTickerWidget: BaristaWidget {
 
     func start() {
         currentTimerInterval = effectiveRefreshInterval
+        // Portfolios saved before the ledger existed get one seeded at decode.
+        // Write it back once so the migration is permanent rather than redone on
+        // every launch. Deferred a turn on purpose: WidgetInstance registers the
+        // observer that actually persists config only after start() returns, so
+        // saving synchronously here would post into an empty room.
+        if config.portfolios.contains(where: { $0.didSeedLedger }) {
+            for i in config.portfolios.indices { config.portfolios[i].didSeedLedger = false }
+            DispatchQueue.main.async { [weak self] in self?.saveConfig() }
+        }
         loadCachedQuotesIfNeeded()
         fetchAll(force: true)
         // Earnings dates change daily at most, and the service throttles itself.
         EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
             self?.onDisplayUpdate?()
             self?.onDataRefresh?()
+            self?.checkEarningsAlerts()
         }
         if config.compareToBenchmark {
             BenchmarkSeries.shared.refreshIfNeeded { [weak self] in self?.onDataRefresh?() }
@@ -788,6 +887,12 @@ class StockTickerWidget: BaristaWidget {
             }
         }
         fetchAll()
+        // The service self-throttles to a 6 hour cadence; without this the
+        // calendar was only ever loaded once, at launch.
+        EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
+            self?.onDataRefresh?()
+        }
+        checkEarningsAlerts()
     }
 
     func saveConfig() {
@@ -880,11 +985,14 @@ class StockTickerWidget: BaristaWidget {
     private func renderPortfolio() -> WidgetDisplayMode {
         let font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
         if let pv = portfolioSnapshot() {
-            let totalStr = formatCurrency(pv.total)
-            let plStr = String(format: " %@ (%@%.1f%%)", formatSignedCurrency(pv.dailyPL), pv.dailyPercent >= 0 ? "+" : "", pv.dailyPercent)
+            // The menu bar is the live glance, so it includes extended hours.
+            // The portfolio panel is where the session close and the after-hours
+            // move are separated.
+            let totalStr = formatCurrency(pv.liveTotal)
+            let plStr = String(format: " %@ (%@%.1f%%)", formatSignedCurrency(pv.livePL), pv.livePercent >= 0 ? "+" : "", pv.livePercent)
             let r = NSMutableAttributedString()
             r.append(NSAttributedString(string: totalStr, attributes: [.font: font, .foregroundColor: Theme.textPrimary]))
-            let plColor = intensityColor(for: pv.dailyPercent)
+            let plColor = intensityColor(for: pv.livePercent)
             r.append(NSAttributedString(string: plStr, attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium), .foregroundColor: plColor]))
             return .attributedText(r)
         }
@@ -932,7 +1040,8 @@ class StockTickerWidget: BaristaWidget {
             showGrid: showGrid,
             smooth: false,
             glow: false,
-            endPointColor: color
+            endPointColor: color,
+            extendedFromIndex: quote.chartBreakIndex
         )
     }
 
@@ -1131,12 +1240,17 @@ class StockTickerWidget: BaristaWidget {
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                self.lastFetchFailed = false
-                self.noteFetchSuccess()
+                // DataFetcher calls back on the URLSession queue. Widget state and
+                // anything that reads `quotes` must stay on the main thread, or the
+                // array is mutated on one thread while another walks it.
+                DispatchQueue.main.async {
+                    self.lastFetchFailed = false
+                    self.noteFetchSuccess()
+                }
                 self.parseStock(data: data, symbol: symbol, isIndex: false)
             case .failure(let error):
-                self.noteFetchFailure(error)
                 DispatchQueue.main.async {
+                    self.noteFetchFailure(error)
                     // A throttled host is a whole-feed problem, not a bad ticker,
                     // so don't brand the symbol as failed for it.
                     if !self.isBackingOff { self.failedSymbols.insert(symbol) }
@@ -1155,10 +1269,10 @@ class StockTickerWidget: BaristaWidget {
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                self.noteFetchSuccess()
+                DispatchQueue.main.async { self.noteFetchSuccess() }
                 self.parseStock(data: data, symbol: symbol, isIndex: true)
             case .failure(let error):
-                self.noteFetchFailure(error)
+                DispatchQueue.main.async { self.noteFetchFailure(error) }
             }
         }
     }
@@ -1326,6 +1440,8 @@ class StockTickerWidget: BaristaWidget {
                                 preMarketPrice: prePrice, preMarketChange: preChgPct,
                                 postMarketPrice: postPrice, postMarketChange: postChgPct,
                                 marketState: marketState)
+            q.regularStart = Double(regularStart)
+            q.regularEnd = Double(regularEnd)
             q.sparklineTimes = sparkTimes.count == sparkline.count ? sparkTimes : []
             q.minuteCloses = fullCloses
             q.minuteTimes = fullTimes
@@ -1371,12 +1487,14 @@ class StockTickerWidget: BaristaWidget {
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                self.lastFetchFailed = false
-                self.noteFetchSuccess()
+                DispatchQueue.main.async {
+                    self.lastFetchFailed = false
+                    self.noteFetchSuccess()
+                }
                 self.parseCrypto(data: data)
             case .failure(let error):
-                self.noteFetchFailure(error)
                 DispatchQueue.main.async {
+                    self.noteFetchFailure(error)
                     self.lastFetchFailed = true
                     self.onDataRefresh?()
                     if self.quotes.isEmpty { self.onDisplayUpdate?() }
@@ -1442,6 +1560,115 @@ class StockTickerWidget: BaristaWidget {
 
     // MARK: - Price Alerts
 
+    // MARK: - Earnings Alerts
+
+    /// Symbols already warned about, keyed symbol -> the earnings day warned for,
+    /// so a warning fires once per event rather than once per refresh tick.
+    private static let earningsNotifiedKey = "barista.stockTicker.earningsNotified"
+
+    /// Two warnings per event, because they answer different questions.
+    /// The heads-up says "this is coming this week, plan for it". The final one
+    /// says "it is tomorrow, decide now whether to carry it through the print".
+    private enum EarningsStage: String, CaseIterable {
+        case headsUp, imminent
+
+        var maxDaysAway: Int { self == .headsUp ? 3 : 1 }
+    }
+
+    private var earningsNotified: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: Self.earningsNotifiedKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: Self.earningsNotifiedKey) }
+    }
+
+    /// Total shares held of a symbol, and which portfolios hold it.
+    private func holdingsAcrossPortfolios(_ symbol: String) -> (shares: Double, names: [String]) {
+        var shares = 0.0
+        var names: [String] = []
+        for portfolio in config.portfolios {
+            if let qty = portfolio.holdings[symbol], qty > 0 {
+                shares += qty
+                names.append(portfolio.name)
+            }
+        }
+        return (shares, names)
+    }
+
+    /// Warns once when something you actually own is about to report.
+    ///
+    /// Deliberately limited to held positions: an earnings date on a symbol you
+    /// are merely watching is information, but one on a position you are carrying
+    /// overnight is a decision.
+    func checkEarningsAlerts() {
+        let cal = Calendar.current
+        var notified = earningsNotified
+        var changed = false
+
+        let held = Set(config.portfolios.flatMap { $0.holdings.filter { $0.value > 0 }.keys })
+        for symbol in held.sorted() {
+            guard let event = EarningsCalendarService.shared.event(for: symbol) else { continue }
+            let days = event.daysAway
+            guard days >= 0 else { continue }
+
+            // Fire the most urgent stage the event currently qualifies for, so a
+            // symbol first seen two days out gets the imminent warning rather
+            // than a heads-up about something already nearly here.
+            guard let stage = EarningsStage.allCases
+                .sorted(by: { $0.maxDaysAway < $1.maxDaysAway })
+                .first(where: { days <= $0.maxDaysAway }) else { continue }
+
+            let stamp = ISO8601DateFormatter.earningsDay.string(from: cal.startOfDay(for: event.date))
+            let key = "\(symbol)@\(stage.rawValue)"
+            guard notified[key] != stamp else { continue }
+
+            let (shares, names) = holdingsAcrossPortfolios(symbol)
+            guard shares > 0 else { continue }
+
+            let when: String
+            switch days {
+            case 0:  when = "today"
+            case 1:  when = "tomorrow"
+            default: when = "in \(days) days"
+            }
+            let session = event.sessionLabel.map { $0 == "pre" ? " before the open" : " after the close" } ?? ""
+            var body = "You hold \(formatShares(shares)) \(shares == 1 ? "share" : "shares")"
+            if names.count > 1 { body += " across \(names.joined(separator: " and "))" }
+            body += ". Reports \(when)\(session)."
+            if let eps = event.epsForecast, !eps.isEmpty { body += " Consensus \(eps)." }
+
+            let content = UNMutableNotificationContent()
+            content.title = "\(symbol) earnings \(when)"
+            content.body = body
+            content.sound = .default
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: "barista.earnings.\(key).\(stamp)",
+                                      content: content, trigger: nil))
+
+            notified[key] = stamp
+            changed = true
+        }
+
+        // Drop entries for events that have passed so the store cannot grow forever.
+        let stale = notified.filter { key, _ in
+            let symbol = String(key.split(separator: "@").first ?? "")
+            guard let event = EarningsCalendarService.shared.event(for: symbol) else { return true }
+            return event.daysAway < 0
+        }
+        if !stale.isEmpty {
+            for key in stale.keys { notified.removeValue(forKey: key) }
+            changed = true
+        }
+        if changed { earningsNotified = notified }
+    }
+
+    /// Share counts for user-facing text, without trailing zeros.
+    func formatShareCount(_ value: Double) -> String { formatShares(value) }
+
+    private func formatShares(_ value: Double) -> String {
+        value == value.rounded()
+            ? String(Int(value))
+            : String(format: "%g", value)
+    }
+
     private func checkPriceAlert(symbol: String, newPrice: Double) {
         guard let target = config.priceAlerts[symbol] else { return }
         guard let oldPrice = previousPrices[symbol] else { return }
@@ -1502,17 +1729,15 @@ class StockTickerWidget: BaristaWidget {
     func removeQuote(_ symbol: String, kind: MarketQuote.Kind) {
         if kind == .stock {
             config.symbols.removeAll { $0 == symbol }
-            config.holdings.removeValue(forKey: symbol)
-            config.costBasis.removeValue(forKey: symbol)
             config.priceAlerts.removeValue(forKey: symbol)
+            config.setQuantity(0, for: symbol, note: "Removed from portfolio")
             quotes.removeAll { $0.symbol == symbol && $0.kind == .stock }
             failedSymbols.remove(symbol)
         } else {
             let coinId = symbolToCoinID[symbol] ?? symbol.lowercased()
             config.coins.removeAll { $0 == coinId || (coinSymbols[$0] ?? "") == symbol }
-            config.holdings.removeValue(forKey: symbol)
-            config.costBasis.removeValue(forKey: symbol)
             config.priceAlerts.removeValue(forKey: symbol)
+            config.setQuantity(0, for: symbol, note: "Removed from portfolio")
             quotes.removeAll { $0.symbol == symbol && $0.kind == .crypto }
         }
         saveConfig()
@@ -1525,22 +1750,13 @@ class StockTickerWidget: BaristaWidget {
                     averageCost rawCost: Double? = nil) {
         let normalized = symbol.uppercased()
         let quantity = rawQuantity.isFinite ? max(0, rawQuantity) : 0
-        if quantity > 0 {
-            config.holdings[normalized] = quantity
-            if let rawCost {
-                let cost = rawCost.isFinite ? max(0, rawCost) : 0
-                if cost > 0 {
-                    config.costBasis[normalized] = cost
-                } else {
-                    config.costBasis.removeValue(forKey: normalized)
-                }
-            }
-            if kind == .stock, !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
-                config.symbols.append(normalized)
-            }
-        } else {
-            config.holdings.removeValue(forKey: normalized)
-            config.costBasis.removeValue(forKey: normalized)
+        let cost = rawCost.flatMap { $0.isFinite ? max(0, $0) : nil }
+        // Recorded as a dated adjustment rather than written straight to the
+        // cache, so the ledger stays the only source of these numbers.
+        config.setQuantity(quantity, for: normalized, averageCost: cost)
+        if quantity > 0, kind == .stock,
+           !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
+            config.symbols.append(normalized)
         }
         saveConfig()
         onDisplayUpdate?()
@@ -1548,6 +1764,43 @@ class StockTickerWidget: BaristaWidget {
         if quantity > 0 {
             refreshQuoteNow(symbol: normalized, kind: kind)
         }
+    }
+
+    /// Logs a buy or a sell. Share count, average cost and realised profit all
+    /// fall out of the ledger, so nothing else needs updating.
+    @discardableResult
+    func recordTrade(symbol: String,
+                     kind: MarketQuote.Kind,
+                     side: Transaction.Kind,
+                     quantity: Double,
+                     price: Double,
+                     date: Date = Date(),
+                     note: String? = nil) -> Bool {
+        let normalized = symbol.uppercased()
+        guard quantity.isFinite, quantity > 0, price.isFinite, price >= 0 else { return false }
+        // Selling what you do not hold is a typo, not a short position; the
+        // ledger would clamp it silently, so refuse it where the user can see.
+        if side == .sell, (config.holdings[normalized] ?? 0) < quantity { return false }
+
+        config.record(Transaction(date: date, symbol: normalized, kind: side,
+                                  quantity: quantity, price: price, note: note))
+        if side == .buy, kind == .stock,
+           !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
+            config.symbols.append(normalized)
+        }
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
+        if side == .buy { refreshQuoteNow(symbol: normalized, kind: kind) }
+        return true
+    }
+
+    /// Removes a logged trade and rebuilds the derived numbers without it.
+    func deleteTrade(id: String) {
+        config.mutateActivePortfolio { $0.removeTransaction(id: id) }
+        saveConfig()
+        onDisplayUpdate?()
+        onDataRefresh?()
     }
 
     func setCash(_ rawAmount: Double) {
@@ -1617,7 +1870,7 @@ class StockTickerWidget: BaristaWidget {
     /// watchlist or fetched for the indices bar, so this costs nothing.
     func intradayBenchmarkSeries(symbol: String = BenchmarkSeries.defaultSymbol,
                                  matching times: [Date],
-                                 startingAt startValue: Double) -> [(date: Date, value: Double)]? {
+                                 startingAt startValue: Double) -> [(date: Date, value: Double, raw: Double)]? {
         guard times.count >= 2, startValue > 0 else { return nil }
         guard let quote = portfolioQuote(for: symbol)
                 ?? indexQuotes.first(where: { $0.symbol == symbol }) else { return nil }
@@ -1631,11 +1884,11 @@ class StockTickerWidget: BaristaWidget {
         let t0 = times[0].timeIntervalSince1970
         guard let base = Self.value(in: values, times: series, at: t0), base > 0 else { return nil }
 
-        var out: [(date: Date, value: Double)] = []
+        var out: [(date: Date, value: Double, raw: Double)] = []
         for date in times {
             guard let price = Self.value(in: values, times: series,
                                          at: date.timeIntervalSince1970) else { continue }
-            out.append((date, startValue * (price / base)))
+            out.append((date, startValue * (price / base), price))
         }
         // Same honesty rule as the daily path: don't draw through gaps.
         return out.count >= max(2, Int(Double(times.count) * 0.6)) ? out : nil
@@ -1950,9 +2203,6 @@ extension StockTickerWidget: DeclarativeConfig {
             .toggle(label: "Show Extended Hours", key: "showExtendedHours",
                     get: { [weak self] in self?.config.showExtendedHours ?? true },
                     set: { [weak self] in self?.config.showExtendedHours = $0 }),
-            .toggle(label: "Show Major Indices", key: "showIndices",
-                    get: { [weak self] in self?.config.showIndices ?? true },
-                    set: { [weak self] in self?.config.showIndices = $0 }),
             .toggle(label: "Colored Ticker Text", key: "coloredTicker",
                     get: { [weak self] in self?.config.coloredTicker ?? true },
                     set: { [weak self] in self?.config.coloredTicker = $0 }),

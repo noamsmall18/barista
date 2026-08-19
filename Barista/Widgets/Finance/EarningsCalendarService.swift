@@ -187,3 +187,13 @@ final class EarningsCalendarService {
         lastFetch = UserDefaults.standard.object(forKey: Self.cacheKey + ".date") as? Date
     }
 }
+
+/// Stable day-granularity stamp used to remember which earnings event a warning
+/// has already been shown for.
+extension ISO8601DateFormatter {
+    static let earningsDay: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withFullDate]
+        return f
+    }()
+}

@@ -13,33 +13,25 @@ enum WidgetDisplayMode {
 // MARK: - Widget Category
 
 enum WidgetCategory: String, CaseIterable, Codable {
-    case timeCalendar = "Time & Calendar"
-    case weather = "Weather"
     case finance = "Finance"
     case system = "System"
+    case weather = "Weather"
     case productivity = "Productivity"
     case musicMedia = "Music & Media"
-    case social = "Social"
-    case funLifestyle = "Fun & Lifestyle"
+    case timeCalendar = "Time & Calendar"
     case sports = "Sports"
-    case developer = "Developer"
     case utility = "Utility"
-    case health = "Health"
 
     var icon: String {
         switch self {
-        case .timeCalendar: return "clock"
-        case .weather: return "cloud.sun"
         case .finance: return "chart.line.uptrend.xyaxis"
         case .system: return "cpu"
+        case .weather: return "cloud.sun"
         case .productivity: return "checkmark.circle"
         case .musicMedia: return "music.note"
-        case .social: return "person.2"
-        case .funLifestyle: return "sparkles"
+        case .timeCalendar: return "clock"
         case .sports: return "sportscourt"
-        case .developer: return "terminal"
         case .utility: return "wrench"
-        case .health: return "heart.fill"
         }
     }
 }

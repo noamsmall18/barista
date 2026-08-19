@@ -6,10 +6,50 @@ import Cocoa
 ///
 /// Pulled out of the dialog so the layout can be built and rendered without
 /// running a modal, which is the only way to check it without clicking through.
-final class HoldingsForm {
+// NSObject because the mode switch uses target/action.
+final class HoldingsForm: NSObject {
+    /// What the Save button will do.
+    ///
+    /// `set` corrects the position outright; `buy` and `sell` append to the
+    /// ledger. Selling is the only one that can bank a realised profit, which is
+    /// why it needs its own mode rather than being inferred from a lower number.
+    enum Mode: Int, CaseIterable {
+        case set, buy, sell
+
+        var title: String {
+            switch self {
+            case .set: return "Set"
+            case .buy: return "Buy"
+            case .sell: return "Sell"
+            }
+        }
+        var shareLabel: String {
+            switch self {
+            case .set: return "Shares held (0 to remove)"
+            case .buy: return "Shares bought"
+            case .sell: return "Shares sold"
+            }
+        }
+        var costLabel: String {
+            switch self {
+            case .set: return "Average cost per share (optional)"
+            case .buy: return "Price paid per share"
+            case .sell: return "Price sold at per share"
+            }
+        }
+        var costPlaceholder: String {
+            self == .set ? "leave blank to skip" : "required"
+        }
+    }
+
     let view: NSView
     let shareField: NSTextField
     let costField: NSTextField
+    private let modeControl: NSSegmentedControl
+    private let shareLabelField: NSTextField
+    private let costLabelField: NSTextField
+
+    var mode: Mode { Mode(rawValue: modeControl.selectedSegment) ?? .set }
 
     /// The container is a plain (unflipped) NSView, so these are measured from
     /// the bottom up: cost input, cost label, share input, share label.
@@ -19,8 +59,11 @@ final class HoldingsForm {
     private static let labelGap: CGFloat = 3     // between a label and its field
     private static let groupGap: CGFloat = 12    // between the two field groups
 
+    private static let modeHeight: CGFloat = 24
+
     static var formHeight: CGFloat {
-        fieldHeight + labelGap + labelHeight + groupGap + fieldHeight + labelGap + labelHeight
+        fieldHeight + labelGap + labelHeight + groupGap
+            + fieldHeight + labelGap + labelHeight + groupGap + modeHeight
     }
 
     init(shares: Double, cost: Double?) {
@@ -32,6 +75,7 @@ final class HoldingsForm {
         let costLabelY = costFieldY + fh + Self.labelGap
         let shareFieldY = costLabelY + lh + Self.groupGap
         let shareLabelY = shareFieldY + fh + Self.labelGap
+        let modeY = shareLabelY + lh + Self.groupGap
 
         view = NSView(frame: NSRect(x: 0, y: 0, width: w, height: Self.formHeight))
 
@@ -47,7 +91,15 @@ final class HoldingsForm {
             return l
         }
 
-        let shareLabel = label("Shares held (0 to remove)", y: shareLabelY)
+        modeControl = NSSegmentedControl(labels: Mode.allCases.map(\.title),
+                                         trackingMode: .selectOne,
+                                         target: nil, action: nil)
+        modeControl.frame = NSRect(x: 0, y: modeY, width: w, height: Self.modeHeight)
+        modeControl.selectedSegment = Mode.set.rawValue
+        view.addSubview(modeControl)
+
+        let shareLabel = label(Mode.set.shareLabel, y: shareLabelY)
+        shareLabelField = shareLabel
         view.addSubview(shareLabel)
 
         shareField = NSTextField(frame: NSRect(x: 0, y: shareFieldY, width: w, height: fh))
@@ -56,7 +108,8 @@ final class HoldingsForm {
         shareField.placeholderString = "0"
         view.addSubview(shareField)
 
-        let costLabel = label("Average cost per share (optional)", y: costLabelY)
+        let costLabel = label(Mode.set.costLabel, y: costLabelY)
+        costLabelField = costLabel
         view.addSubview(costLabel)
 
         costField = NSTextField(frame: NSRect(x: 0, y: costFieldY, width: w, height: fh))
@@ -69,6 +122,26 @@ final class HoldingsForm {
 
         shareField.nextKeyView = costField
         costField.nextKeyView = shareField
+
+        super.init()
+
+        modeControl.target = self
+        modeControl.action = #selector(modeChanged)
+    }
+
+    /// Relabels the fields so the dialog reads as the action it will perform.
+    @objc private func modeChanged() {
+        let m = mode
+        shareLabelField.stringValue = m.shareLabel
+        costLabelField.stringValue = m.costLabel
+        costField.placeholderString = m.costPlaceholder
+        if m != .set {
+            // "Shares held" prefilled with the current position makes no sense
+            // once the question becomes "how many did you trade".
+            shareField.stringValue = ""
+            costField.stringValue = ""
+        }
+        view.window?.makeFirstResponder(shareField)
     }
 
     // MARK: - Reading values

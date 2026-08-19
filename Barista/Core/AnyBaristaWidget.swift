@@ -39,6 +39,11 @@ class AnyBaristaWidget {
         _underlying as? T
     }
 
+    /// Check if the underlying widget is the same object instance (for notification matching).
+    func isUnderlyingIdentical(to object: AnyObject) -> Bool {
+        _underlying === object
+    }
+
     init<W: BaristaWidget>(_ widget: W) {
         self._underlying = widget
         self.widgetID = W.widgetID
@@ -113,4 +118,9 @@ class AnyBaristaWidget {
     // InteractiveDropdown accessors
     func buildDropdownPopover() -> NSView { _buildDropdownPopover() }
     var dropdownSize: NSSize { _dropdownSize() }
+
+    // DeclarativeConfig support
+    func asDeclarativeConfig() -> DeclarativeConfig? {
+        _underlying as? DeclarativeConfig
+    }
 }

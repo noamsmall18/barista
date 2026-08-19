@@ -5,7 +5,7 @@
     <key>CFBundleExecutable</key>
     <string>Barista</string>
     <key>CFBundleIdentifier</key>
-    <string>com.noam.barista</string>
+    <string>com.noam.barista.app</string>
     <key>CFBundleName</key>
     <string>Barista</string>
     <key>CFBundleDisplayName</key>
@@ -27,9 +27,7 @@
         <key>NSAllowsArbitraryLoads</key>
         <true/>
     </dict>
-    <key>SUFeedURL</key>
-    <string>https://barista.app/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string></string>
+    <key>NSHealthShareUsageDescription</key>
+    <string>Barista displays your health data (steps, heart rate, sleep) in the menu bar.</string>
 </dict>
 </plist>

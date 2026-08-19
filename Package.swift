@@ -10,7 +10,10 @@ let package = Package(
             name: "Barista",
             dependencies: [],
             path: "Barista",
-            exclude: ["Info.plist", "Barista.entitlements"]
+            exclude: ["Info.plist", "Barista.entitlements"],
+            linkerSettings: [
+                .linkedFramework("CoreWLAN")
+            ]
         )
     ]
 )

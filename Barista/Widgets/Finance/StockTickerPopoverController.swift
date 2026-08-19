@@ -57,23 +57,16 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         let stocks = sorted.filter { $0.kind == .stock }
         let crypto = sorted.filter { $0.kind == .crypto }
 
-        // Indices
-        if w.config.showIndices && !w.indexQuotes.isEmpty {
-            y += 2
-            addIndicesBar(y: &y, pad: pad, cw: cw)
-        }
-
-        // Portfolio. Once a second portfolio exists the card stays put even when the
-        // active one is empty, otherwise the tabs would vanish with no way back.
+        // Portfolio leads, since it's the thing you open this for. Its history and
+        // allocation cards stay attached to it rather than being split by the
+        // indices bar. Once a second portfolio exists the card stays put even when
+        // the active one is empty, otherwise the tabs would vanish with no way back.
         let snapshot = w.portfolioSnapshot()
         if snapshot != nil || w.config.portfolios.count > 1 {
             y += 2
-            addPortfolioSummary(snapshot, y: &y, pad: pad, cw: cw)
-            if let snapshot {
-                addHistoryCard(snapshot, y: &y, pad: pad, cw: cw)
-                addAllocationCard(snapshot, y: &y, pad: pad, cw: cw)
-            }
+            addPortfolioPanel(snapshot, y: &y, pad: pad, cw: cw)
         }
+
 
         y += 6
 
@@ -139,284 +132,305 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         }
     }
 
-    // MARK: - Indices Bar
+    // MARK: - Portfolio Panel
 
-    private func addIndicesBar(y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
+    /// One panel holding the portfolio summary, the value chart, and the
+    /// allocation breakdown, split by hairlines rather than by three separate
+    /// cards. Built as a FlippedView so sections can be stacked top-down.
+    ///
+    /// `pv` is nil when the active portfolio is still empty, which only reaches
+    /// here when other portfolios exist - the tab strip has to stay reachable so
+    /// you can switch back.
+    private func addPortfolioPanel(_ pv: PortfolioSnapshot?, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
         guard let w = widget else { return }
-        let card = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: 46))
-        card.wantsLayer = true
-        card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = Theme.cardBg.cgColor
-        card.layer?.borderWidth = 0.5
-        card.layer?.borderColor = Theme.cardBorder.cgColor
-        docView.addSubview(card)
+        let panelW = cw + 8
 
-        let indices: [(String, String)] = [("S&P 500", "SPY"), ("NASDAQ", "QQQ"), ("DOW", "DIA")]
-        let colW = cw / 3
-        for (i, (name, sym)) in indices.enumerated() {
-            guard let q = w.indexQuotes.first(where: { $0.symbol == sym }) else { continue }
-            let x = 12 + CGFloat(i) * colW
-            let nl = NSTextField(labelWithString: name)
-            nl.font = NSFont.systemFont(ofSize: 9, weight: .medium); nl.textColor = Theme.textFaint
-            nl.frame = NSRect(x: x, y: 9, width: colW - 10, height: 12)
-            card.addSubview(nl)
-            let session = (q.extendedHours?.label).map { " \($0)" } ?? ""
-            let vl = NSTextField(labelWithString: "\(q.currentIsUp ? "\u{25B2}" : "\u{25BC}")\(String(format: "%.2f%%", abs(q.currentChange)))\(session)")
-            vl.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
-            vl.textColor = w.intensityColor(for: q.currentChange)
-            vl.frame = NSRect(x: x, y: 24, width: colW - 10, height: 14)
-            card.addSubview(vl)
+        // ---- measure ----
+        let summaryH = portfolioSummaryHeight(pv)
+        var sections: [(divider: Bool, height: CGFloat)] = []
+
+        let historyH: CGFloat? = pv == nil ? nil : historySectionHeight()
+        if let historyH { sections.append((true, historyH)) }
+
+        let allocation = pv.flatMap { allocationModel(for: $0) }
+        let allocationH: CGFloat? = allocation.map { allocationSectionHeight($0) }
+        if let allocationH { sections.append((true, allocationH)) }
+
+        let dividerGap: CGFloat = 11
+        let panelH = summaryH
+            + sections.reduce(0) { $0 + (($1.divider ? dividerGap : 0) + $1.height) }
+            + 10
+
+        let panel = FlippedView(frame: NSRect(x: pad - 4, y: y, width: panelW, height: panelH))
+        panel.wantsLayer = true
+        panel.layer?.cornerRadius = 10
+        panel.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.06).cgColor
+        panel.layer?.borderWidth = 0.5
+        panel.layer?.borderColor = Theme.brandAmber.withAlphaComponent(0.15).cgColor
+        docView.addSubview(panel)
+
+        // ---- lay out ----
+        var top: CGFloat = 0
+        addPortfolioSummarySection(pv, to: panel, top: &top, cw: cw, panelW: panelW)
+
+        if let historyH, let pv {
+            addPanelDivider(to: panel, top: &top, panelW: panelW, gap: dividerGap)
+            addHistorySection(pv, to: panel, top: top, cw: cw)
+            top += historyH
         }
-        y += 52
+        if let allocation, let allocationH {
+            addPanelDivider(to: panel, top: &top, panelW: panelW, gap: dividerGap)
+            addAllocationSection(allocation, to: panel, top: top, cw: cw)
+            top += allocationH
+        }
+
+        _ = w
+        y += panelH + 6
     }
 
-    // MARK: - Portfolio
+    private func addPanelDivider(to panel: NSView, top: inout CGFloat, panelW: CGFloat, gap: CGFloat) {
+        top += (gap - 1) / 2
+        let line = NSView(frame: NSRect(x: 0, y: top, width: panelW, height: 1))
+        line.wantsLayer = true
+        line.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.12).cgColor
+        panel.addSubview(line)
+        top += 1 + (gap - 1) / 2
+    }
 
-    /// The portfolio card. `pv` is nil when the active portfolio is still empty,
-    /// which only reaches here when other portfolios exist - the tab strip has to
-    /// stay reachable so you can switch back.
-    private func addPortfolioSummary(_ pv: PortfolioSnapshot?, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
+    // MARK: - Panel: summary section
+
+    private func portfolioSummaryHeight(_ pv: PortfolioSnapshot?) -> CGFloat {
+        guard let pv else { return 10 + 28 + 34 }
+        var h: CGFloat = 10 + 28 + 24 + 18       // pad + tabs + value row + positions row
+        if pv.totalPL != nil { h += 16 }
+        if (widget?.config.realizedTotal ?? 0) != 0 { h += 14 }
+        if pv.extendedPL != nil { h += 15 }
+        if !portfolioInsight(pv).isEmpty { h += 13 }
+        h += 12                                   // prev close basis
+        return h
+    }
+
+    private func portfolioInsight(_ pv: PortfolioSnapshot) -> String {
+        guard let w = widget else { return "" }
+        var parts: [String] = []
+        if let top = pv.topExposure {
+            parts.append(String(format: "Top %@ %.0f%%", top.quote.symbol, pv.weight(of: top)))
+        }
+        if let best = pv.bestPosition, abs(best.dailyPL) >= 0.01 {
+            parts.append("Best \(best.quote.symbol) \(w.formatSignedCurrency(best.dailyPL))")
+        }
+        let bestSymbol = pv.bestPosition?.quote.symbol
+        if let worst = pv.worstPosition, abs(worst.dailyPL) >= 0.01,
+           bestSymbol.map({ worst.quote.symbol != $0 }) ?? true {
+            parts.append("Worst \(worst.quote.symbol) \(w.formatSignedCurrency(worst.dailyPL))")
+        }
+        if !pv.missingSymbols.isEmpty {
+            parts.append("Missing \(pv.missingSymbols.joined(separator: ","))")
+        }
+        return parts.joined(separator: "   ")
+    }
+
+    private func addPortfolioSummarySection(_ pv: PortfolioSnapshot?, to panel: NSView,
+                                            top: inout CGFloat, cw: CGFloat, panelW: CGFloat) {
         guard let w = widget else { return }
-
-        let tabRowH: CGFloat = 28
-        let showsTotalReturn = pv?.totalPL != nil
-        let bodyH: CGFloat = pv == nil ? 44 : (showsTotalReturn ? 88 : 74)
-        let cardH = bodyH + tabRowH
-
-        let card = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: cardH))
-        card.wantsLayer = true; card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.06).cgColor
-        card.layer?.borderWidth = 0.5; card.layer?.borderColor = Theme.brandAmber.withAlphaComponent(0.15).cgColor
-        docView.addSubview(card)
-
-        addPortfolioTabs(to: card, cardW: cw + 8, atY: bodyH)
+        top += 6
+        addPortfolioTabs(to: panel, cardW: panelW, atY: top)
+        top += 28
 
         guard let pv else {
             let empty = NSTextField(labelWithString: "No holdings yet")
             empty.font = NSFont.systemFont(ofSize: 11, weight: .medium)
             empty.textColor = Theme.textMuted
-            empty.frame = NSRect(x: 10, y: 22, width: cw / 2, height: 16)
-            card.addSubview(empty)
+            empty.frame = NSRect(x: 12, y: top, width: cw / 2, height: 16)
+            panel.addSubview(empty)
 
             let hint = NSTextField(labelWithString: "Use +sh on a symbol below to add a position")
             hint.font = NSFont.systemFont(ofSize: 9, weight: .regular)
             hint.textColor = Theme.textGhost
             hint.lineBreakMode = .byTruncatingTail
-            hint.frame = NSRect(x: 10, y: 8, width: cw - 20, height: 11)
-            card.addSubview(hint)
+            hint.frame = NSRect(x: 12, y: top + 17, width: cw - 20, height: 11)
+            panel.addSubview(hint)
 
-            addCashButton(to: card, cash: w.config.cash, atY: 21, cw: cw)
-            y += cardH + 6
+            addCashButton(to: panel, cash: w.config.cash, atY: top, cw: cw)
+            top += 34
             return
         }
 
-        // With a total-return line present the upper rows lift to make room for it.
-        let lift: CGFloat = showsTotalReturn ? 14 : 0
+        // Value and today's move.
+        let value = NSTextField(labelWithString: w.formatCurrency(pv.total))
+        value.font = NSFont.monospacedDigitSystemFont(ofSize: 17, weight: .bold)
+        value.textColor = Theme.textPrimary
+        value.frame = NSRect(x: 12, y: top, width: cw / 2, height: 22)
+        panel.addSubview(value)
 
-        let vl = NSTextField(labelWithString: w.formatCurrency(pv.total))
-        vl.font = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .bold); vl.textColor = Theme.textPrimary
-        vl.frame = NSRect(x: 10, y: 50 + lift, width: cw / 2, height: 18)
-        card.addSubview(vl)
-
-        let pl = NSTextField(labelWithString: String(format: "%@ (%@%.1f%%)",
+        let day = NSTextField(labelWithString: String(format: "%@ (%@%.1f%%)",
                                                      w.formatSignedCurrency(pv.dailyPL),
                                                      pv.dailyPercent >= 0 ? "+" : "",
                                                      pv.dailyPercent))
-        pl.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-        pl.textColor = w.intensityColor(for: pv.dailyPercent)
-        pl.alignment = .right; pl.frame = NSRect(x: cw / 2, y: 52 + lift, width: cw / 2 - 4, height: 16)
-        card.addSubview(pl)
+        day.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        day.textColor = w.intensityColor(for: pv.dailyPercent)
+        day.alignment = .right
+        day.frame = NSRect(x: cw / 2 - 40, y: top + 4, width: cw / 2 + 36, height: 16)
+        panel.addSubview(day)
+        top += 24
 
-        let positionText = "\(pv.positions.count) position\(pv.positions.count == 1 ? "" : "s")  \(pv.winners) up / \(pv.losers) down"
-        let positionLabel = NSTextField(labelWithString: positionText)
-        positionLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        positionLabel.textColor = Theme.textMuted
-        positionLabel.frame = NSRect(x: 10, y: 34 + lift, width: cw - 116, height: 12)
-        card.addSubview(positionLabel)
+        // Extended hours, on its own line and never folded into the day above.
+        // During pre-market the value above is yesterday's close, so this reads
+        // as "since that close" in both phases.
+        if let extPL = pv.extendedPL, let label = pv.extendedLabel, abs(extPL) >= 0.005 {
+            let pct = pv.extendedPercent ?? 0
+            let name = NSTextField(labelWithString: label)
+            name.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+            name.textColor = Theme.textMuted
+            name.frame = NSRect(x: 12, y: top, width: cw / 2, height: 13)
+            panel.addSubview(name)
 
-        addCashButton(to: card, cash: pv.cash, atY: 31 + lift, cw: cw)
+            let move = NSTextField(labelWithString: String(format: "%@ (%@%.2f%%)",
+                                                           w.formatSignedCurrency(extPL),
+                                                           pct >= 0 ? "+" : "", pct))
+            move.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+            move.textColor = w.intensityColor(for: pct)
+            move.alignment = .right
+            move.lineBreakMode = .byTruncatingTail
+            move.frame = NSRect(x: cw / 2 - 40, y: top, width: cw / 2 + 36, height: 13)
+            panel.addSubview(move)
+            top += 15
+        }
 
-        // Total return since purchase, across the positions that have a cost recorded.
+        // Positions and cash.
+        let positions = NSTextField(labelWithString:
+            "\(pv.positions.count) position\(pv.positions.count == 1 ? "" : "s")  \(pv.winners) up / \(pv.losers) down")
+        positions.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        positions.textColor = Theme.textMuted
+        positions.frame = NSRect(x: 12, y: top + 2, width: cw - 116, height: 12)
+        panel.addSubview(positions)
+        addCashButton(to: panel, cash: pv.cash, atY: top, cw: cw)
+        top += 18
+
+        // Cost and gain since purchase.
         if let totalPL = pv.totalPL, let totalCost = pv.totalCost {
             let pct = pv.totalPercent ?? 0
-            let costLabel = NSTextField(labelWithString: "Cost \(w.formatCurrency(totalCost))")
-            costLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
-            costLabel.textColor = Theme.textMuted
-            costLabel.frame = NSRect(x: 10, y: 32, width: cw / 2, height: 13)
-            card.addSubview(costLabel)
+            let cost = NSTextField(labelWithString: "Cost \(w.formatCurrency(totalCost))")
+            cost.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+            cost.textColor = Theme.textMuted
+            cost.frame = NSRect(x: 12, y: top, width: cw / 2, height: 13)
+            panel.addSubview(cost)
 
             let suffix = pv.hasPartialCostBasis ? "  (\(pv.costedPositions.count) of \(pv.positions.count))" : ""
             let gain = NSTextField(labelWithString: String(format: "%@ (%@%.1f%%)%@",
-                                                           w.formatSignedCurrency(totalPL),
-                                                           pct >= 0 ? "+" : "",
-                                                           pct, suffix))
+                                                          w.formatSignedCurrency(totalPL),
+                                                          pct >= 0 ? "+" : "", pct, suffix))
             gain.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
             gain.textColor = w.intensityColor(for: pct)
             gain.alignment = .right
             gain.lineBreakMode = .byTruncatingTail
-            gain.frame = NSRect(x: cw / 2 - 40, y: 32, width: cw / 2 + 36, height: 13)
-            card.addSubview(gain)
+            gain.frame = NSRect(x: cw / 2 - 40, y: top, width: cw / 2 + 36, height: 13)
+            panel.addSubview(gain)
+            top += 16
         }
 
-        var insightParts: [String] = []
-        if let top = pv.topExposure {
-            insightParts.append(String(format: "Top %@ %.0f%%", top.quote.symbol, pv.weight(of: top)))
-        }
-        if let best = pv.bestPosition, abs(best.dailyPL) >= 0.01 {
-            insightParts.append("Best \(best.quote.symbol) \(w.formatSignedCurrency(best.dailyPL))")
-        }
-        let bestSymbol = pv.bestPosition?.quote.symbol
-        if let worst = pv.worstPosition,
-           abs(worst.dailyPL) >= 0.01,
-           bestSymbol.map({ worst.quote.symbol != $0 }) ?? true {
-            insightParts.append("Worst \(worst.quote.symbol) \(w.formatSignedCurrency(worst.dailyPL))")
-        }
-        if !pv.missingSymbols.isEmpty {
-            insightParts.append("Missing \(pv.missingSymbols.joined(separator: ","))")
+        // Profit actually banked by selling. Hidden until there is some, so a
+        // portfolio that has never sold anything is not cluttered with a zero.
+        let realized = w.config.realizedTotal
+        if realized != 0 {
+            let label = NSTextField(labelWithString: "Realised")
+            label.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+            label.textColor = Theme.textMuted
+            label.frame = NSRect(x: 12, y: top, width: cw / 2, height: 13)
+            panel.addSubview(label)
+
+            let trades = w.config.tradeHistory.count
+            let value = NSTextField(labelWithString:
+                "\(w.formatSignedCurrency(realized))  (\(trades) trade\(trades == 1 ? "" : "s"))")
+            value.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+            value.textColor = w.intensityColor(for: realized >= 0 ? 1 : -1)
+            value.alignment = .right
+            value.lineBreakMode = .byTruncatingTail
+            value.frame = NSRect(x: cw / 2 - 40, y: top, width: cw / 2 + 36, height: 13)
+            panel.addSubview(value)
+            top += 14
         }
 
-        let insight = NSTextField(labelWithString: insightParts.joined(separator: "   "))
-        insight.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-        insight.textColor = Theme.textGhost
-        insight.lineBreakMode = .byTruncatingTail
-        insight.frame = NSRect(x: 10, y: 18, width: cw - 20, height: 11)
-        card.addSubview(insight)
+        let insightText = portfolioInsight(pv)
+        if !insightText.isEmpty {
+            let insight = NSTextField(labelWithString: insightText)
+            insight.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+            insight.textColor = Theme.textGhost
+            insight.lineBreakMode = .byTruncatingTail
+            insight.frame = NSRect(x: 12, y: top, width: cw - 20, height: 11)
+            panel.addSubview(insight)
+            top += 13
+        }
 
-        let baselineLabel = NSTextField(labelWithString: "Prev close basis \(w.formatCurrency(pv.baselineTotal))")
-        baselineLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
-        baselineLabel.textColor = Theme.textGhost
-        baselineLabel.frame = NSRect(x: 10, y: 5, width: cw - 20, height: 10)
-        card.addSubview(baselineLabel)
-
-        y += cardH + 6
+        let baseline = NSTextField(labelWithString: "Prev close basis \(w.formatCurrency(pv.baselineTotal))")
+        baseline.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
+        baseline.textColor = Theme.textGhost
+        baseline.frame = NSRect(x: 12, y: top, width: cw - 20, height: 10)
+        panel.addSubview(baseline)
+        top += 12
     }
 
-    // MARK: - Collapsible Card Headers
+    // MARK: - Panel: history section
 
-    /// Header row with a disclosure chevron. The whole row is the hit target,
-    /// not just the chevron, and a summary sits on the right when collapsed so a
-    /// shut card still tells you something.
-    private func addCollapsibleHeader(to card: NSView,
-                                      title: String,
-                                      cardH: CGFloat,
-                                      cw: CGFloat,
-                                      collapsed: Bool,
-                                      summary: NSAttributedString?,
-                                      action: Selector) {
-        let rowH: CGFloat = 22
-        let rowY = cardH - rowH - 4
+    private func historySectionHeight() -> CGFloat {
+        guard let w = widget, let active = w.config.activePortfolio else { return 22 }
+        if w.config.historyCollapsed { return 22 }
+        let points = historyPoints(for: active.id, range: w.config.historyRange)
+        return points.count >= 2 ? 22 + 6 + 104 + 13 + 16 : 22 + 6 + 26
+    }
 
-        let chevron = NSImageView(frame: NSRect(x: 12, y: rowY + 5, width: 10, height: 10))
-        chevron.image = NSImage(systemSymbolName: collapsed ? "chevron.right" : "chevron.down",
-                                accessibilityDescription: collapsed ? "Expand" : "Collapse")
-        chevron.contentTintColor = Theme.textFaint
-        card.addSubview(chevron)
-
-        let label = NSTextField(labelWithString: title)
-        label.font = NSFont.systemFont(ofSize: 9, weight: .bold)
-        label.textColor = Theme.textFaint
-        label.frame = NSRect(x: 27, y: rowY + 4, width: 110, height: 12)
-        card.addSubview(label)
-
-        if collapsed, let summary {
-            let s = NSTextField(labelWithAttributedString: summary)
-            s.alignment = .right
-            s.lineBreakMode = .byTruncatingTail
-            s.frame = NSRect(x: cw / 2 - 40, y: rowY + 4, width: cw / 2 + 36, height: 13)
-            card.addSubview(s)
+    /// Points for a range: 1D is rebuilt live from intraday quotes, the rest come
+    /// from the stored series.
+    private func historyPoints(for portfolioID: String,
+                               range: PortfolioHistoryService.Range) -> [PortfolioHistoryService.Point] {
+        guard let w = widget else { return [] }
+        if range.isIntraday {
+            return (w.intradayPortfolioSeries() ?? [])
+                .map { PortfolioHistoryService.Point(time: $0.date, value: $0.value) }
         }
-
-        // Transparent button across the row, added last so it sits on top.
-        // Kept clear of the right edge when expanded, where the range picker lives.
-        let hitWidth = collapsed ? cw + 8 : min(cw + 8, 150)
-        let hit = NSButton(frame: NSRect(x: 0, y: rowY, width: hitWidth, height: rowH))
-        hit.isBordered = false
-        hit.isTransparent = true
-        hit.toolTip = collapsed ? "Show \(title.lowercased())" : "Hide \(title.lowercased())"
-        hit.target = self
-        hit.action = action
-        card.addSubview(hit)
+        return PortfolioHistoryService.shared.points(for: portfolioID, range: range)
     }
 
-    @objc private func historyCollapseToggled() {
-        guard let w = widget else { return }
-        w.config.historyCollapsed.toggle()
-        w.saveConfig()
-        rebuildContent()
-    }
-
-    @objc private func allocationCollapseToggled() {
-        guard let w = widget else { return }
-        w.config.allocationCollapsed.toggle()
-        w.saveConfig()
-        rebuildContent()
-    }
-
-    // MARK: - Portfolio History
-
-    /// Value over time for the active portfolio: headline value, range picker,
-    /// an interactive chart, and the stats worth knowing at a glance.
-    ///
-    /// History accrues from first run, so this stays in an explanatory state
-    /// until there are two days to compare.
-    private func addHistoryCard(_ pv: PortfolioSnapshot, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
+    private func addHistorySection(_ pv: PortfolioSnapshot, to panel: NSView, top: CGFloat, cw: CGFloat) {
         guard let w = widget, let active = w.config.activePortfolio else { return }
-
-        let history = PortfolioHistoryService.shared
         let range = w.config.historyRange
-        let totalSamples = history.sampleCount(for: active.id)
-
-        // 1D is rebuilt live from today's intraday quotes; the other ranges come
-        // from the stored daily series.
-        let intraday = range.isIntraday ? w.intradayPortfolioSeries() : nil
-        let points: [PortfolioHistoryService.Point] = range.isIntraday
-            ? (intraday ?? []).map { PortfolioHistoryService.Point(time: $0.date, value: $0.value) }
-            : history.points(for: active.id, range: range)
+        let collapsed = w.config.historyCollapsed
+        let points = historyPoints(for: active.id, range: range)
         let hasChart = points.count >= 2
 
-        let collapsed = w.config.historyCollapsed
-        let chartH: CGFloat = 104
-        let cardH: CGFloat = collapsed ? 30 : (hasChart ? 176 : 74)
-        let card = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: cardH))
-        card.wantsLayer = true; card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = Theme.cardBg.cgColor
-        card.layer?.borderWidth = 0.5; card.layer?.borderColor = Theme.cardBorder.cgColor
-        docView.addSubview(card)
+        let delta: (absolute: Double, percent: Double)? = {
+            guard hasChart, let first = points.first?.value, first > 0,
+                  let last = points.last?.value else { return nil }
+            return (last - first, (last - first) / first * 100)
+        }()
 
-        // Collapsed summary: the move over the selected range.
-        var headerSummary: NSAttributedString?
+        var summary: NSAttributedString?
         if collapsed {
-            let collapsedDelta = range.isIntraday
-                ? (points.count >= 2 && points[0].value > 0
-                    ? (points[points.count - 1].value - points[0].value, (points[points.count - 1].value - points[0].value) / points[0].value * 100)
-                    : nil)
-                : history.change(for: active.id, range: range)
-            if let d = collapsedDelta {
-                headerSummary = NSAttributedString(
+            if let d = delta {
+                summary = NSAttributedString(
                     string: String(format: "%@  %@ (%@%.1f%%)", range.label,
-                                   w.formatSignedCurrency(d.0),
-                                   d.1 >= 0 ? "+" : "", d.1),
+                                   w.formatSignedCurrency(d.absolute),
+                                   d.percent >= 0 ? "+" : "", d.percent),
                     attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .semibold),
-                                 .foregroundColor: w.intensityColor(for: d.1)])
+                                 .foregroundColor: w.intensityColor(for: d.percent)])
             } else {
-                headerSummary = NSAttributedString(string: "no data yet", attributes: [
+                summary = NSAttributedString(string: "no data yet", attributes: [
                     .font: NSFont.systemFont(ofSize: 9.5, weight: .regular),
                     .foregroundColor: Theme.textGhost])
             }
         }
 
-        addCollapsibleHeader(to: card, title: "HISTORY", cardH: cardH, cw: cw,
-                             collapsed: collapsed, summary: headerSummary,
-                             action: #selector(historyCollapseToggled))
+        addSectionHeaderRow(to: panel, title: "HISTORY", top: top, cw: cw,
+                            collapsed: collapsed, summary: summary,
+                            reserveRight: collapsed ? 0 : 200,
+                            action: #selector(historyCollapseToggled))
+        guard !collapsed else { return }
 
-        guard !collapsed else {
-            y += cardH + 6
-            return
-        }
+        addHistoryRangePicker(to: panel, top: top, cw: cw, selected: range)
 
-        addHistoryRangePicker(to: card, cardH: cardH, cw: cw, selected: range)
-
+        var cursor = top + 22 + 6
         guard hasChart else {
+            let totalSamples = PortfolioHistoryService.shared.sampleCount(for: active.id)
             let message: String
             if range.isIntraday {
                 message = "No intraday data yet - it fills in as quotes arrive during the session."
@@ -429,85 +443,210 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
             note.font = NSFont.systemFont(ofSize: 9.5, weight: .regular)
             note.textColor = Theme.textGhost
             note.lineBreakMode = .byWordWrapping
-            note.frame = NSRect(x: 12, y: 14, width: cw - 20, height: 26)
-            card.addSubview(note)
-            y += cardH + 6
+            note.frame = NSRect(x: 12, y: cursor, width: cw - 20, height: 26)
+            panel.addSubview(note)
             return
         }
 
         let values = points.map(\.value)
-        let delta: (absolute: Double, percent: Double)?
-        if range.isIntraday {
-            if let first = values.first, let last = values.last, first > 0 {
-                delta = (last - first, (last - first) / first * 100)
-            } else {
-                delta = nil
-            }
-        } else {
-            delta = history.change(for: active.id, range: range)
-        }
-        let pct = delta?.percent ?? 0
-        let tint = w.intensityColor(for: pct)
+        let tint = w.intensityColor(for: delta?.percent ?? 0)
 
-        // Headline: where the portfolio stands now, and the move over the range.
-        let latest = NSTextField(labelWithString: PortfolioChartView.money(values.last ?? 0))
-        latest.font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .bold)
-        latest.textColor = Theme.textPrimary
-        latest.frame = NSRect(x: 12, y: cardH - 40, width: cw / 2, height: 19)
-        card.addSubview(latest)
-
-        if let delta {
-            let arrow = delta.absolute >= 0 ? "\u{25B2}" : "\u{25BC}"
-            let changeLabel = NSTextField(labelWithString: String(format: "%@ %@  (%@%.1f%%)",
-                                                                 arrow,
-                                                                 w.formatSignedCurrency(delta.absolute),
-                                                                 delta.percent >= 0 ? "+" : "",
-                                                                 delta.percent))
-            changeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-            changeLabel.textColor = tint
-            changeLabel.alignment = .right
-            changeLabel.frame = NSRect(x: cw / 2 - 40, y: cardH - 38, width: cw / 2 + 36, height: 16)
-            card.addSubview(changeLabel)
-        }
-
-        // The chart itself.
-        let chart = PortfolioChartView(frame: NSRect(x: 10, y: 30, width: cw - 12, height: chartH))
+        let chart = PortfolioChartView(frame: NSRect(x: 10, y: cursor, width: cw - 12, height: 104))
         chart.accent = tint
         chart.axisStyle = range.isIntraday ? .time : .date
         chart.samples = points.map { PortfolioChartView.Sample(date: $0.time, value: $0.value) }
-
-        // Benchmark, when enough points line up to be honest about it. Intraday
-        // reads the index's own minute bars; longer ranges use daily closes.
         if w.config.compareToBenchmark {
             let rebased = range.isIntraday
-                ? w.intradayBenchmarkSeries(matching: points.map(\.time),
-                                            startingAt: values.first ?? 0)
-                : BenchmarkSeries.shared.rebased(to: points.map(\.time),
-                                                 startingAt: values.first ?? 0)
+                ? w.intradayBenchmarkSeries(matching: points.map(\.time), startingAt: values.first ?? 0)
+                : BenchmarkSeries.shared.rebased(to: points.map(\.time), startingAt: values.first ?? 0)
             if let rebased {
-                chart.benchmark = rebased.map { PortfolioChartView.Sample(date: $0.date, value: $0.value) }
+                chart.benchmark = rebased.map {
+                    PortfolioChartView.Sample(date: $0.date, value: $0.value, raw: $0.raw)
+                }
             }
         }
-        card.addSubview(chart)
+        panel.addSubview(chart)
+        cursor += 104
 
-        addHistoryFooter(to: card, cw: cw, portfolioID: active.id, range: range,
-                         points: points, chart: chart, widget: w,
-                         intradayCount: range.isIntraday ? points.count : nil)
+        // The panel already shows the portfolio value, so the range's move goes
+        // between the two date labels rather than repeating the total.
+        if let delta {
+            let mid = NSTextField(labelWithString: String(format: "%@%.1f%%",
+                                                         delta.percent >= 0 ? "+" : "", delta.percent))
+            mid.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+            mid.textColor = tint
+            mid.alignment = .center
+            mid.frame = NSRect(x: 12, y: cursor - 1, width: cw - 20, height: 11)
+            panel.addSubview(mid)
+        }
+        cursor += 13
 
-        y += cardH + 6
+        addHistoryFooter(to: panel, top: cursor, cw: cw, portfolioID: active.id,
+                         range: range, points: points, chart: chart, widget: w)
     }
 
-    /// 1W / 1M / 3M / 6M / ALL.
-    private func addHistoryRangePicker(to card: NSView, cardH: CGFloat, cw: CGFloat,
+    // MARK: - Panel: allocation section
+
+    private struct AllocationModel {
+        let snapshot: PortfolioSnapshot
+        let ranked: [PortfolioPosition]
+        let cashSlice: Bool
+        let rowCount: Int
+        let concentrated: Bool
+    }
+
+    private func allocationModel(for pv: PortfolioSnapshot) -> AllocationModel? {
+        let ranked = pv.positions.sorted { $0.value > $1.value }
+        let cashSlice = pv.cash > 0
+        let rowCount = ranked.count + (cashSlice ? 1 : 0)
+        guard rowCount >= 2 else { return nil }   // a single slice is always 100%
+        let concentrated = ranked.first.map { pv.weight(of: $0) > Self.concentrationLimit } ?? false
+        return AllocationModel(snapshot: pv, ranked: ranked, cashSlice: cashSlice,
+                               rowCount: rowCount, concentrated: concentrated)
+    }
+
+    private func allocationSectionHeight(_ m: AllocationModel) -> CGFloat {
+        guard let w = widget, !w.config.allocationCollapsed else { return 22 }
+        return 22 + 4 + CGFloat(m.rowCount) * 15 + (m.concentrated ? 14 : 0)
+    }
+
+    private func addAllocationSection(_ m: AllocationModel, to panel: NSView, top: CGFloat, cw: CGFloat) {
+        guard let w = widget else { return }
+        let pv = m.snapshot
+        let collapsed = w.config.allocationCollapsed
+
+        var summary: NSAttributedString?
+        if let topPos = m.ranked.first {
+            let weight = pv.weight(of: topPos)
+            summary = NSAttributedString(
+                string: String(format: "%@ %.0f%% top of %d", topPos.quote.symbol, weight, m.rowCount),
+                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
+                             .foregroundColor: m.concentrated ? Theme.red.withAlphaComponent(0.8)
+                                                              : Theme.textGhost])
+        }
+
+        // The summary reads usefully whether open or shut, so it stays either way.
+        addSectionHeaderRow(to: panel, title: "ALLOCATION", top: top, cw: cw,
+                            collapsed: collapsed, summary: summary,
+                            reserveRight: 0,
+                            action: #selector(allocationCollapseToggled))
+        guard !collapsed else { return }
+
+        let barX: CGFloat = 68
+        let pctX = cw - 74
+        let barW = pctX - 8 - barX
+        let rowH: CGFloat = 15
+        let firstRowTop = top + 22 + 4
+
+        // Slices are drawn relative to the largest one so small positions stay visible.
+        let maxWeight = max(m.ranked.first.map { pv.weight(of: $0) } ?? 0,
+                            m.cashSlice && pv.total > 0 ? pv.cash / pv.total * 100 : 0)
+
+        func addRow(label: String, weight: Double, color: NSColor, index: Int) {
+            let rowY = firstRowTop + CGFloat(index) * rowH
+
+            let name = NSTextField(labelWithString: label)
+            name.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)
+            name.textColor = Theme.textSecondary
+            name.lineBreakMode = .byTruncatingTail
+            name.frame = NSRect(x: 12, y: rowY, width: 52, height: 11)
+            panel.addSubview(name)
+
+            let track = NSView(frame: NSRect(x: barX, y: rowY + 3, width: barW, height: 6))
+            track.wantsLayer = true; track.layer?.cornerRadius = 3
+            track.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
+            panel.addSubview(track)
+
+            let frac = maxWeight > 0 ? min(max(weight / maxWeight, 0), 1) : 0
+            let fillW = max(frac * barW, weight > 0 ? 3 : 0)
+            let fill = NSView(frame: NSRect(x: barX, y: rowY + 3, width: fillW, height: 6))
+            fill.wantsLayer = true; fill.layer?.cornerRadius = 3
+            fill.layer?.backgroundColor = color.cgColor
+            panel.addSubview(fill)
+
+            let pct = NSTextField(labelWithString: String(format: "%.0f%%", weight))
+            pct.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+            pct.textColor = Theme.textMuted
+            pct.alignment = .right
+            pct.frame = NSRect(x: pctX, y: rowY, width: 70, height: 11)
+            panel.addSubview(pct)
+        }
+
+        for (i, position) in m.ranked.enumerated() {
+            let weight = pv.weight(of: position)
+            addRow(label: position.quote.symbol,
+                   weight: weight,
+                   color: weight > Self.concentrationLimit ? Theme.red.withAlphaComponent(0.65)
+                                                           : Theme.brandAmber.withAlphaComponent(0.55),
+                   index: i)
+        }
+        if m.cashSlice {
+            addRow(label: "Cash",
+                   weight: pv.total > 0 ? pv.cash / pv.total * 100 : 0,
+                   color: Theme.brandCyan.withAlphaComponent(0.45),
+                   index: m.ranked.count)
+        }
+
+        if m.concentrated, let topPos = m.ranked.first {
+            let warn = NSTextField(labelWithString: String(format: "%@ is %.0f%% of this portfolio",
+                                                          topPos.quote.symbol, pv.weight(of: topPos)))
+            warn.font = NSFont.systemFont(ofSize: 9, weight: .medium)
+            warn.textColor = Theme.red.withAlphaComponent(0.75)
+            warn.lineBreakMode = .byTruncatingTail
+            warn.frame = NSRect(x: 12, y: firstRowTop + CGFloat(m.rowCount) * rowH, width: cw - 20, height: 11)
+            panel.addSubview(warn)
+        }
+    }
+
+    // MARK: - Panel: shared section header
+
+    /// Section header inside the panel: a chevron, a title, and an optional
+    /// summary on the right. The whole row toggles, except where `reserveRight`
+    /// keeps clear of a control sharing the line.
+    private func addSectionHeaderRow(to panel: NSView, title: String, top: CGFloat, cw: CGFloat,
+                                     collapsed: Bool, summary: NSAttributedString?,
+                                     reserveRight: CGFloat, action: Selector) {
+        let chevron = NSImageView(frame: NSRect(x: 12, y: top + 6, width: 10, height: 10))
+        chevron.image = NSImage(systemSymbolName: collapsed ? "chevron.right" : "chevron.down",
+                                accessibilityDescription: collapsed ? "Expand" : "Collapse")
+        chevron.contentTintColor = Theme.textFaint
+        panel.addSubview(chevron)
+
+        let label = NSTextField(labelWithString: title)
+        label.font = NSFont.systemFont(ofSize: 9, weight: .bold)
+        label.textColor = Theme.textFaint
+        label.frame = NSRect(x: 27, y: top + 5, width: 110, height: 12)
+        panel.addSubview(label)
+
+        if let summary {
+            let s = NSTextField(labelWithAttributedString: summary)
+            s.alignment = .right
+            s.lineBreakMode = .byTruncatingTail
+            s.frame = NSRect(x: cw / 2 - 40, y: top + 5, width: cw / 2 + 36 - reserveRight, height: 13)
+            panel.addSubview(s)
+        }
+
+        let hitWidth = max(140, cw + 8 - reserveRight)
+        let hit = NSButton(frame: NSRect(x: 0, y: top, width: hitWidth, height: 22))
+        hit.isBordered = false
+        hit.isTransparent = true
+        hit.toolTip = collapsed ? "Show \(title.lowercased())" : "Hide \(title.lowercased())"
+        hit.target = self
+        hit.action = action
+        panel.addSubview(hit)
+    }
+
+    /// 1D / 1W / 1M / 3M / 6M / ALL.
+    private func addHistoryRangePicker(to panel: NSView, top: CGFloat, cw: CGFloat,
                                        selected: PortfolioHistoryService.Range) {
         let ranges = PortfolioHistoryService.Range.allCases
         let segW: CGFloat = 32
         let gap: CGFloat = 2
         let trackW = segW * CGFloat(ranges.count) + gap * CGFloat(ranges.count + 1)
-        let track = NSView(frame: NSRect(x: cw - 4 - trackW, y: cardH - 22, width: trackW, height: 18))
+        let track = NSView(frame: NSRect(x: cw - 4 - trackW, y: top + 2, width: trackW, height: 18))
         track.wantsLayer = true; track.layer?.cornerRadius = 6
         track.layer?.backgroundColor = Theme.sunkenBg.cgColor
-        card.addSubview(track)
+        panel.addSubview(track)
 
         for (i, r) in ranges.enumerated() {
             let x = gap + CGFloat(i) * (segW + gap)
@@ -531,29 +670,30 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     }
 
     /// Best and worst day in the range, plus the benchmark toggle.
-    private func addHistoryFooter(to card: NSView, cw: CGFloat, portfolioID: String,
+    private func addHistoryFooter(to panel: NSView, top: CGFloat, cw: CGFloat, portfolioID: String,
                                   range: PortfolioHistoryService.Range,
                                   points: [PortfolioHistoryService.Point],
                                   chart: PortfolioChartView,
-                                  widget w: StockTickerWidget,
-                                  intradayCount: Int?) {
+                                  widget w: StockTickerWidget) {
         let fmt = DateFormatter(); fmt.dateFormat = "MMM d"
-
         var parts: [(String, NSColor)] = []
-        if let intradayCount {
+
+        if range.isIntraday {
             // Day-over-day extremes mean nothing inside a single session.
             let tf = DateFormatter(); tf.dateFormat = "h:mm a"
             if let first = points.first?.time, let last = points.last?.time {
                 parts.append(("\(tf.string(from: first)) - \(tf.string(from: last))", Theme.textGhost))
             }
-            parts.append(("\(intradayCount) samples", Theme.textGhost))
-        } else if let moves = PortfolioHistoryService.shared.extremeMoves(for: portfolioID, range: range) {
-            parts.append((String(format: "Best %@ %+.1f%%", fmt.string(from: moves.best.day), moves.best.pct),
-                          Theme.green.withAlphaComponent(0.8)))
-            parts.append((String(format: "Worst %@ %+.1f%%", fmt.string(from: moves.worst.day), moves.worst.pct),
-                          Theme.red.withAlphaComponent(0.8)))
+            parts.append(("\(points.count) samples", Theme.textGhost))
+        } else {
+            if let moves = PortfolioHistoryService.shared.extremeMoves(for: portfolioID, range: range) {
+                parts.append((String(format: "Best %@ %+.1f%%", fmt.string(from: moves.best.day), moves.best.pct),
+                              Theme.green.withAlphaComponent(0.8)))
+                parts.append((String(format: "Worst %@ %+.1f%%", fmt.string(from: moves.worst.day), moves.worst.pct),
+                              Theme.red.withAlphaComponent(0.8)))
+            }
+            parts.append(("\(points.count) pts", Theme.textGhost))
         }
-        if intradayCount == nil { parts.append(("\(points.count) days", Theme.textGhost)) }
 
         let line = NSMutableAttributedString()
         for (i, part) in parts.enumerated() {
@@ -567,13 +707,16 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         }
         let stats = NSTextField(labelWithAttributedString: line)
         stats.lineBreakMode = .byTruncatingTail
-        stats.frame = NSRect(x: 12, y: 9, width: cw - 108, height: 12)
-        card.addSubview(stats)
+        stats.frame = NSRect(x: 12, y: top + 2, width: cw - 108, height: 12)
+        panel.addSubview(stats)
 
-        // Benchmark toggle. Disabled with an explanation when the data isn't usable.
         let on = w.config.compareToBenchmark
         let available = chart.benchmark != nil
-        let btn = NSButton(frame: NSRect(x: cw - 94, y: 6, width: 90, height: 17))
+        // A fetch in flight is not the same as no data. Saying "unavailable" in
+        // the gap between switching on and the data landing reads as a failure.
+        let loading = on && !available && !range.isIntraday && BenchmarkSeries.shared.isFetching()
+
+        let btn = NSButton(frame: NSRect(x: cw - 94, y: top, width: 90, height: 17))
         btn.isBordered = false; btn.wantsLayer = true
         btn.layer?.cornerRadius = 5
         btn.layer?.backgroundColor = (on && available ? Theme.brandCyan.withAlphaComponent(0.14)
@@ -581,17 +724,28 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         btn.layer?.borderWidth = 0.5
         btn.layer?.borderColor = (on && available ? Theme.brandCyan.withAlphaComponent(0.3)
                                                   : Theme.cardBorder).cgColor
-        let title = on && !available ? "SPY unavailable" : "vs SPY"
+
+        let title: String
+        let titleColor: NSColor
+        if on && available {
+            title = "vs SPY"; titleColor = Theme.brandCyan
+        } else if loading {
+            title = "SPY loading\u{2026}"; titleColor = Theme.textMuted
+        } else if on {
+            title = "SPY unavailable"; titleColor = Theme.textGhost
+        } else {
+            title = "vs SPY"; titleColor = Theme.textMuted
+        }
         btn.attributedTitle = NSAttributedString(string: title, attributes: [
             .font: NSFont.systemFont(ofSize: 8.5, weight: .medium),
-            .foregroundColor: on && available ? Theme.brandCyan
-                            : (on ? Theme.textGhost : Theme.textMuted)
+            .foregroundColor: titleColor
         ])
         btn.toolTip = available || !on
             ? "Overlay SPY, rebased to this portfolio's starting value"
-            : "Not enough overlapping SPY data for this range yet"
+            : (loading ? "Fetching SPY history\u{2026}"
+                       : "Not enough overlapping SPY data for this range yet")
         btn.target = self; btn.action = #selector(benchmarkToggled)
-        card.addSubview(btn)
+        panel.addSubview(btn)
     }
 
     @objc private func historyRangeChanged(_ sender: NSButton) {
@@ -613,116 +767,18 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         rebuildContent()
     }
 
+    @objc private func historyCollapseToggled() {
+        guard let w = widget else { return }
+        w.config.historyCollapsed.toggle()
+        w.saveConfig()
+        rebuildContent()
+    }
 
-    // MARK: - Allocation
-
-    /// Weight of each position in the portfolio, largest first, with a flag when
-    /// any single name dominates. Everything here comes off the existing snapshot.
-    private func addAllocationCard(_ pv: PortfolioSnapshot, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
-        let ranked = pv.positions.sorted { $0.value > $1.value }
-        let cashSlice = pv.cash > 0
-        let rowCount = ranked.count + (cashSlice ? 1 : 0)
-        guard rowCount >= 2 else { return }   // a single slice is always 100%
-
-        let collapsed = widget?.config.allocationCollapsed ?? false
-        let concentrated = ranked.first.map { pv.weight(of: $0) > Self.concentrationLimit } ?? false
-        let rowH: CGFloat = 15
-        let cardH = collapsed ? 30 : (30 + CGFloat(rowCount) * rowH + (concentrated ? 15 : 0) + 8)
-
-        let card = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: cardH))
-        card.wantsLayer = true; card.layer?.cornerRadius = 10
-        card.layer?.backgroundColor = Theme.cardBg.cgColor
-        card.layer?.borderWidth = 0.5; card.layer?.borderColor = Theme.cardBorder.cgColor
-        docView.addSubview(card)
-
-        // Collapsed summary: the largest slice, flagged if it's oversized.
-        var headerSummary: NSAttributedString?
-        if collapsed, let top = ranked.first {
-            let weight = pv.weight(of: top)
-            headerSummary = NSAttributedString(
-                string: String(format: "%@ %.0f%% top of %d", top.quote.symbol, weight, rowCount),
-                attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
-                             .foregroundColor: concentrated ? Theme.red.withAlphaComponent(0.8)
-                                                            : Theme.textMuted])
-        }
-
-        addCollapsibleHeader(to: card, title: "ALLOCATION", cardH: cardH, cw: cw,
-                             collapsed: collapsed, summary: headerSummary,
-                             action: #selector(allocationCollapseToggled))
-
-        guard !collapsed else {
-            y += cardH + 6
-            return
-        }
-
-        let barX: CGFloat = 68
-        let pctX = cw - 74
-        let barW = pctX - 8 - barX
-
-        // Slices are drawn relative to the largest one so small positions stay visible.
-        let maxWeight = max(
-            ranked.first.map { pv.weight(of: $0) } ?? 0,
-            cashSlice && pv.total > 0 ? pv.cash / pv.total * 100 : 0
-        )
-
-        func addRow(label: String, weight: Double, color: NSColor, index: Int) {
-            let rowY = cardH - 30 - CGFloat(index + 1) * rowH + 3
-
-            let name = NSTextField(labelWithString: label)
-            name.font = NSFont.monospacedSystemFont(ofSize: 9, weight: .semibold)
-            name.textColor = Theme.textSecondary
-            name.lineBreakMode = .byTruncatingTail
-            name.frame = NSRect(x: 12, y: rowY, width: 52, height: 11)
-            card.addSubview(name)
-
-            let track = NSView(frame: NSRect(x: barX, y: rowY + 2, width: barW, height: 6))
-            track.wantsLayer = true; track.layer?.cornerRadius = 3
-            track.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.05).cgColor
-            card.addSubview(track)
-
-            let frac = maxWeight > 0 ? min(max(weight / maxWeight, 0), 1) : 0
-            let fillW = max(frac * barW, weight > 0 ? 3 : 0)
-            let fill = NSView(frame: NSRect(x: barX, y: rowY + 2, width: fillW, height: 6))
-            fill.wantsLayer = true; fill.layer?.cornerRadius = 3
-            fill.layer?.backgroundColor = color.cgColor
-            card.addSubview(fill)
-
-            let pct = NSTextField(labelWithString: String(format: "%.0f%%", weight))
-            pct.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
-            pct.textColor = Theme.textMuted
-            pct.alignment = .right
-            pct.frame = NSRect(x: pctX, y: rowY, width: 70, height: 11)
-            card.addSubview(pct)
-        }
-
-        for (i, position) in ranked.enumerated() {
-            let weight = pv.weight(of: position)
-            let tooBig = weight > Self.concentrationLimit
-            addRow(label: position.quote.symbol,
-                   weight: weight,
-                   color: tooBig ? Theme.red.withAlphaComponent(0.65)
-                                 : Theme.brandAmber.withAlphaComponent(0.55),
-                   index: i)
-        }
-
-        if cashSlice {
-            addRow(label: "Cash",
-                   weight: pv.total > 0 ? pv.cash / pv.total * 100 : 0,
-                   color: Theme.brandCyan.withAlphaComponent(0.45),
-                   index: ranked.count)
-        }
-
-        if concentrated, let top = ranked.first {
-            let warn = NSTextField(labelWithString: String(format: "%@ is %.0f%% of this portfolio",
-                                                           top.quote.symbol, pv.weight(of: top)))
-            warn.font = NSFont.systemFont(ofSize: 9, weight: .medium)
-            warn.textColor = Theme.red.withAlphaComponent(0.75)
-            warn.lineBreakMode = .byTruncatingTail
-            warn.frame = NSRect(x: 12, y: 7, width: cw - 20, height: 11)
-            card.addSubview(warn)
-        }
-
-        y += cardH + 6
+    @objc private func allocationCollapseToggled() {
+        guard let w = widget else { return }
+        w.config.allocationCollapsed.toggle()
+        w.saveConfig()
+        rebuildContent()
     }
 
     /// A single position above this share of the portfolio gets flagged.
@@ -1350,7 +1406,6 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
             ("paintbrush", "Colors", w.config.coloredTicker, 0),
             ("chart.xyaxis.line", "Sparklines", w.config.showSparklines, 1),
             ("chart.bar", "Volume", w.config.showVolume, 2),
-            ("list.number", "Indices", w.config.showIndices, 3),
             ("clock.badge.fill", "AH/PM", w.config.showExtendedHours, 4),
             ("building.columns", "Mkt Cap", w.config.showMarketCap, 5),
             ("arrow.up.and.down", "Day Range", w.config.showDayRange, 6),
@@ -1718,8 +1773,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         let symbol = String(parts[2])
 
         let alert = NSAlert()
-        alert.messageText = "Set Holdings for \(symbol)"
-        alert.informativeText = "Shares, and what you paid per share. Leave the cost blank to skip total-return tracking for this position."
+        alert.messageText = "\(symbol) position"
+        alert.informativeText = "Set corrects the position outright. Buy and Sell log a trade, which is what lets Barista work out what you have actually banked."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
@@ -1728,12 +1783,34 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         alert.accessoryView = form.view
         alert.window.initialFirstResponder = form.shareField
 
-        if alert.runModal() == .alertFirstButtonReturn {
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        switch form.mode {
+        case .set:
             w.setHolding(symbol: symbol, kind: kind,
                          quantity: form.enteredShares,
                          averageCost: form.enteredCost)
-            rebuildContent()
+        case .buy, .sell:
+            let side: Transaction.Kind = form.mode == .buy ? .buy : .sell
+            guard let price = form.enteredCost, price > 0, form.enteredShares > 0 else {
+                presentTradeProblem("Enter both a share count and a price to log a trade.")
+                return
+            }
+            if !w.recordTrade(symbol: symbol, kind: kind, side: side,
+                              quantity: form.enteredShares, price: price) {
+                presentTradeProblem("You hold \(w.formatShareCount(w.config.holdings[symbol] ?? 0)) of \(symbol), so that sale cannot be recorded.")
+                return
+            }
         }
+        rebuildContent()
+    }
+
+    private func presentTradeProblem(_ message: String) {
+        let alert = NSAlert()
+        alert.messageText = "Trade not recorded"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     // MARK: - Portfolio Actions
@@ -1870,7 +1947,6 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         case 0: w.config.coloredTicker.toggle()
         case 1: w.config.showSparklines.toggle()
         case 2: w.config.showVolume.toggle()
-        case 3: w.config.showIndices.toggle()
         case 4: w.config.showExtendedHours.toggle()
         case 5: w.config.showMarketCap.toggle()
         case 6: w.config.showDayRange.toggle()

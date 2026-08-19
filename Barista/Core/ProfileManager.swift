@@ -86,15 +86,16 @@ class ProfileManager {
 
     /// Built-in profile presets.
     static let presets: [(name: String, icon: String, widgetIDs: [String])] = [
-        ("Work", "briefcase", ["calendar-next", "meeting-joiner", "pomodoro", "focus-task", "cpu-monitor"]),
-        ("Home", "house", ["weather-current", "now-playing", "daily-quote", "moon-phase"]),
-        ("Presentation", "play.rectangle", ["focus-task", "keep-awake", "battery-health"]),
-        ("Developer", "terminal", ["git-branch", "docker-status", "cpu-monitor", "ram-monitor", "server-ping"]),
-        ("Minimal", "circle", ["world-clock", "battery-health"]),
+        ("Markets", "chart.line.uptrend.xyaxis", ["stock-ticker", "system-health", "today-brief", "world-clock"]),
+        ("Focus", "timer", ["today-brief", "pomodoro", "keep-awake", "now-playing"]),
+        ("System Desk", "desktopcomputer", ["system-health", "cpu-monitor", "ram-monitor", "network-speed", "battery-health"]),
+        ("Daily Bar", "sun.max", ["today-brief", "weather-current", "calendar-next", "world-clock", "now-playing"]),
+        ("Minimal", "circle", ["stock-ticker", "system-health"]),
     ]
 
     func createPreset(name: String, icon: String, widgetIDs: [String]) -> WidgetProfile {
-        let widgets = widgetIDs.enumerated().map { (i, id) in
+        let validIDs = widgetIDs.filter { WidgetRegistry.shared.entry(for: $0) != nil }
+        let widgets = validIDs.enumerated().map { (i, id) in
             SavedWidget(instanceID: UUID(), widgetID: id, order: i, configData: nil, isEnabled: true)
         }
         let profile = WidgetProfile(name: name, widgets: widgets, icon: icon)

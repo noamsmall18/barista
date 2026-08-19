@@ -16,9 +16,12 @@ final class BenchmarkSeries {
 
     private var dailyCloses: [String: [Date: Double]] = [:]
     private var lastFetch: [String: Date] = [:]
+    private var lastAttempt: [String: Date] = [:]
     private var inFlight: Set<String> = []
     private let queue = DispatchQueue(label: "barista.benchmark", attributes: .concurrent)
     private static let refreshInterval: TimeInterval = 6 * 60 * 60
+    /// How long to wait before trying again after a failed fetch.
+    private static let retryInterval: TimeInterval = 5 * 60
     private static let lookbackDays = 200
 
     private init() { load() }
@@ -30,19 +33,35 @@ final class BenchmarkSeries {
 
     var isLoaded: Bool { !closes().isEmpty }
 
+    /// True while a fetch is in flight, so the UI can say "loading" rather than
+    /// "unavailable" in the gap between toggling on and the data arriving.
+    func isFetching(symbol: String = defaultSymbol) -> Bool {
+        queue.sync { inFlight.contains(symbol) }
+    }
+
     // MARK: - Fetching
 
     func refreshIfNeeded(symbol: String = defaultSymbol, completion: (() -> Void)? = nil) {
-        let due = queue.sync { () -> Bool in
-            if dailyCloses[symbol] == nil { return true }
-            guard let last = lastFetch[symbol] else { return true }
-            return Date().timeIntervalSince(last) > Self.refreshInterval
+        // Check the schedule and claim the slot in one barrier, so two callers
+        // can't both decide to fetch.
+        let shouldFetch = queue.sync(flags: .barrier) { () -> Bool in
+            if inFlight.contains(symbol) { return false }
+            let now = Date()
+            // A failed attempt still counts against the retry clock; otherwise a
+            // dead endpoint gets hammered on every toggle.
+            if let attempt = lastAttempt[symbol], now.timeIntervalSince(attempt) < Self.retryInterval,
+               dailyCloses[symbol] == nil {
+                return false
+            }
+            if dailyCloses[symbol] != nil,
+               let last = lastFetch[symbol], now.timeIntervalSince(last) <= Self.refreshInterval {
+                return false
+            }
+            inFlight.insert(symbol)
+            lastAttempt[symbol] = now
+            return true
         }
-        guard due else { completion?(); return }
-
-        let running = queue.sync { inFlight.contains(symbol) }
-        guard !running else { completion?(); return }
-        queue.async(flags: .barrier) { self.inFlight.insert(symbol) }
+        guard shouldFetch else { completion?(); return }
 
         // ETFs and equities live under different asset classes; try both.
         fetch(symbol: symbol, assetClass: "etf") { [weak self] map in
@@ -95,25 +114,37 @@ final class BenchmarkSeries {
                   let rows = table["rows"] as? [[String: Any]] else {
                 completion(nil); return
             }
-            let inFmt = DateFormatter()
-            inFmt.dateFormat = "MM/dd/yyyy"
-            inFmt.timeZone = TimeZone(identifier: "America/New_York")
-
-            var map: [Date: Double] = [:]
-            let cal = Calendar.current
-            for row in rows {
-                guard let dateStr = row["date"] as? String,
-                      let closeStr = row["close"] as? String,
-                      let date = inFmt.date(from: dateStr) else { continue }
-                // Equities come back as "$28.77", ETFs as "777.88".
-                let cleaned = closeStr.replacingOccurrences(of: "$", with: "")
-                                      .replacingOccurrences(of: ",", with: "")
-                                      .trimmingCharacters(in: .whitespaces)
-                guard let close = Double(cleaned), close > 0 else { continue }
-                map[cal.startOfDay(for: date)] = close
-            }
-            completion(map)
+            completion(Self.parseRows(rows))
         }.resume()
+    }
+
+    /// Turns Nasdaq's rows into close-by-day.
+    ///
+    /// The calendar date is parsed in the *local* calendar rather than in
+    /// Exchange time. Portfolio history points are keyed to local midnight, so
+    /// parsing as ET and then taking startOfDay locally would shift every close
+    /// back a day anywhere west of New York - silently pairing each of your days
+    /// with the previous session's index close.
+    static func parseRows(_ rows: [[String: Any]]) -> [Date: Double] {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MM/dd/yyyy"
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.timeZone = TimeZone.current
+
+        var map: [Date: Double] = [:]
+        let cal = Calendar.current
+        for row in rows {
+            guard let dateStr = row["date"] as? String,
+                  let closeStr = row["close"] as? String,
+                  let date = fmt.date(from: dateStr) else { continue }
+            // Equities come back as "$28.77", ETFs as "777.88".
+            let cleaned = closeStr.replacingOccurrences(of: "$", with: "")
+                                  .replacingOccurrences(of: ",", with: "")
+                                  .trimmingCharacters(in: .whitespaces)
+            guard let close = Double(cleaned), close.isFinite, close > 0 else { continue }
+            map[cal.startOfDay(for: date)] = close
+        }
+        return map
     }
 
     // MARK: - Rebasing
@@ -125,7 +156,7 @@ final class BenchmarkSeries {
     /// benchmark drawn through gaps would misrepresent the comparison.
     func rebased(to portfolioDays: [Date],
                  startingAt startValue: Double,
-                 symbol: String = defaultSymbol) -> [(date: Date, value: Double)]? {
+                 symbol: String = defaultSymbol) -> [(date: Date, value: Double, raw: Double)]? {
         guard portfolioDays.count >= 2, startValue > 0 else { return nil }
         let map = closes(for: symbol)
         guard !map.isEmpty else { return nil }
@@ -137,10 +168,20 @@ final class BenchmarkSeries {
                 matched.append((day, close))
             }
         }
-        guard matched.count >= max(2, Int(Double(portfolioDays.count) * 0.6)),
-              let base = matched.first?.1, base > 0 else { return nil }
+        guard matched.count >= max(2, Int(Double(portfolioDays.count) * 0.6)) else { return nil }
 
-        return matched.map { (date: $0.0, value: startValue * ($0.1 / base)) }
+        // Anchor on the index's close at or before the portfolio's *first* day,
+        // not on the first day they happen to share. If the portfolio starts on a
+        // day the index didn't trade, using the first shared day would measure the
+        // two lines from different dates and quietly compare unlike periods.
+        guard let firstDay = portfolioDays.first else { return nil }
+        let anchorDay = cal.startOfDay(for: firstDay)
+        let base = map[anchorDay]
+            ?? map.keys.filter { $0 <= anchorDay }.max().flatMap { map[$0] }
+            ?? matched.first?.1
+        guard let base, base > 0 else { return nil }
+
+        return matched.map { (date: $0.0, value: startValue * ($0.1 / base), raw: $0.1) }
     }
 
     // MARK: - Persistence

@@ -13,8 +13,7 @@ class WidgetInstance {
     var order: Int
     var isEnabled: Bool = true
 
-    /// The actual measured width of this widget's status item in the menu bar
-    private(set) var measuredWidth: CGFloat = 0
+    private var configObserver: NSObjectProtocol?
 
     init(id: UUID, widgetID: String, widget: AnyBaristaWidget, order: Int) {
         self.id = id
@@ -31,6 +30,18 @@ class WidgetInstance {
             self?.updateStatusItem()
         }
         widget.start()
+
+        // Listen for config changes from interactive dropdowns (popovers)
+        configObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("BaristaWidgetConfigChanged"),
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self = self, let obj = note.object as AnyObject?,
+                  self.widget.isUnderlyingIdentical(to: obj) else { return }
+            if let data = self.widget.getConfigData() {
+                WidgetStore.shared.updateConfig(instanceID: self.id, configData: data)
+            }
+        }
 
         // For cycleable widgets: click cycles, right-click opens menu
         if widget.isCycleable {
@@ -50,11 +61,6 @@ class WidgetInstance {
         }
 
         updateStatusItem()
-
-        // Re-measure after the window has laid out (next run loop)
-        DispatchQueue.main.async { [weak self] in
-            self?.measureWidth()
-        }
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -63,6 +69,13 @@ class WidgetInstance {
         if event.type == .rightMouseUp ||
            event.modifierFlags.contains(.control) {
             // Right-click or Ctrl-click: show dropdown menu
+            showDropdownMenu()
+        } else if widget.hasInteractiveDropdown {
+            if event.modifierFlags.contains(.option), widget.itemCount > 1 {
+                widget.cycleNext()
+                updateStatusItem()
+                return
+            }
             showDropdownMenu()
         } else {
             // Left-click: cycle to next item
@@ -96,6 +109,7 @@ class WidgetInstance {
 
         // Standard NSMenu dropdown
         let menu = widget.buildDropdownMenu()
+
         // Insert "Refresh All Widgets" before the last separator + Quit
         let quitIdx = menu.items.lastIndex(where: { $0.title == "Quit Barista" })
         if let qi = quitIdx, qi >= 1 {
@@ -112,6 +126,8 @@ class WidgetInstance {
 
     func deactivate() {
         widget.stop()
+        if let obs = configObserver { NotificationCenter.default.removeObserver(obs) }
+        configObserver = nil
         refreshTimer?.invalidate()
         refreshTimer = nil
         cycleTimer?.invalidate()
@@ -125,9 +141,17 @@ class WidgetInstance {
 
     func updateStatusItem() {
         guard let item = statusItem else { return }
+
+        // While the popover is open it is anchored to this status-item button.
+        // Mutating the button (length/title/subviews) here dismisses a transient
+        // NSPopover, so a periodic data refresh would make the popover vanish.
+        // Skip the menu-bar redraw until the popover closes; the next refresh
+        // tick catches the button up.
+        if popoverController?.isShown == true { return }
+
         let mode = widget.render()
 
-        // Remove old scroll view if switching modes
+        // Remove old scroll view if switching away from scrolling mode
         if case .scrollingText = mode {} else {
             scrollView?.removeFromSuperview()
             scrollView = nil
@@ -135,11 +159,13 @@ class WidgetInstance {
 
         switch mode {
         case .text(let str):
+            item.length = NSStatusItem.variableLength
             item.button?.title = str
             item.button?.image = nil
             item.button?.imagePosition = .noImage
 
         case .attributedText(let attr):
+            item.length = NSStatusItem.variableLength
             item.button?.attributedTitle = attr
             item.button?.image = nil
             item.button?.imagePosition = .noImage
@@ -154,16 +180,18 @@ class WidgetInstance {
                 tv.autoresizingMask = [.width, .height]
                 button.addSubview(tv)
                 scrollView = tv
+            } else if let sv = scrollView, abs(sv.frame.width - width) > 1 {
+                // Width changed (e.g., switching between normal and compact scroll)
+                sv.frame = NSRect(x: 0, y: 0, width: width, height: 22)
             }
             // Apply scroll speed from widget config
             if let stock = widget.underlying(as: StockTickerWidget.self) {
                 scrollView?.speed = CGFloat(stock.config.scrollSpeed)
-            } else if let crypto = widget.underlying(as: CryptoWidget.self) {
-                scrollView?.speed = CGFloat(crypto.config.scrollSpeed)
             }
             scrollView?.updateAttributedText(attr)
 
         case .iconAndText(let image, let str):
+            item.length = NSStatusItem.variableLength
             item.button?.image = image
             item.button?.imagePosition = .imageLeading
             item.button?.title = str
@@ -172,10 +200,17 @@ class WidgetInstance {
             item.length = width
             let imgHeight: CGFloat = 16
             let imgWidth = label != nil ? width - 40 : width - 8
+            let style: SparklineRenderer.Style
+            if let stock = widget.underlying(as: StockTickerWidget.self),
+               let quote = stock.chartQuoteForCurrentFocus() {
+                style = stock.chartStyle(for: quote, height: imgHeight, pointRadius: 1.6, showGrid: false)
+            } else {
+                style = SparklineRenderer.Style(lineColor: Theme.accent, height: imgHeight, pointRadius: 1.5)
+            }
             let sparkImg = SparklineRenderer.render(
                 data: data,
                 width: imgWidth,
-                style: SparklineRenderer.Style(lineColor: Theme.accent, height: imgHeight, pointRadius: 1.5)
+                style: style
             )
             sparkImg.isTemplate = false
             item.button?.image = sparkImg
@@ -189,9 +224,6 @@ class WidgetInstance {
             }
         }
 
-        // Measure actual width after rendering
-        measureWidth()
-
         // Accessibility
         let accessLabel: String
         switch mode {
@@ -203,14 +235,17 @@ class WidgetInstance {
         }
 
         var label = "\(widget.displayName): \(accessLabel)"
-        if widget.isCycleable && widget.itemCount > 1 {
+        if widget.hasInteractiveDropdown {
+            label += widget.itemCount > 1 ? " (\(widget.currentIndex + 1) of \(widget.itemCount), click to open, option-click to cycle)" : " (click to open)"
+        } else if widget.isCycleable && widget.itemCount > 1 {
             label += " (\(widget.currentIndex + 1) of \(widget.itemCount), click to cycle)"
         }
         item.button?.setAccessibilityLabel(label)
         item.button?.setAccessibilityRole(.button)
 
         // For non-cycleable widgets, set the dropdown menu directly
-        if !widget.isCycleable {
+        // (but not for interactive dropdown widgets - they use the popover via click handler)
+        if !widget.isCycleable && !widget.hasInteractiveDropdown {
             let menu = widget.buildDropdownMenu()
             let quitIdx = menu.items.lastIndex(where: { $0.title == "Quit Barista" })
             if let qi = quitIdx, qi >= 1 {
@@ -219,34 +254,17 @@ class WidgetInstance {
             }
             item.menu = menu
         }
-    }
 
-    /// Measures the actual pixel width this status item occupies in the menu bar
-    private func measureWidth() {
-        guard let item = statusItem else {
-            measuredWidth = 0
-            return
-        }
-
-        // Use the actual window width if available - this is the true space taken
-        if let window = item.button?.window, window.frame.width > 0 {
-            measuredWidth = window.frame.width
-            return
-        }
-
-        // Fallback: use set length for fixed-width items
-        if item.length > 0 {
-            measuredWidth = item.length
-            return
-        }
-
-        // Fallback: measure button fitting size + padding
-        if let button = item.button {
-            let fitted = button.fittingSize
-            measuredWidth = fitted.width + 14
-        } else {
-            measuredWidth = 0
+        // For interactive dropdown widgets, use click target so the popover shows.
+        // Some widgets are both cycleable and interactive; those use option-click
+        // for cycling and normal click for the popover.
+        if widget.hasInteractiveDropdown {
+            item.button?.target = self
+            item.button?.action = #selector(statusItemClicked(_:))
+            item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            item.menu = nil
         }
     }
+
 
 }

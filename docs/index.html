@@ -4,504 +4,882 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Barista - The Menu Bar Platform for macOS</title>
-<meta name="description" content="52 widgets, menu bar styling, script support. The most powerful menu bar app for macOS. Free and open source.">
+<meta name="description" content="12 premium widgets across 8 categories. Menu bar styling, xbar compatibility. The most powerful menu bar app for macOS.">
 <link rel="icon" type="image/png" href="icon.png">
+<link rel="stylesheet" href="style.css">
 <style>
-*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0a0c10;--bg2:#12151c;--bg3:#1a1e28;--bg4:#232836;
-  --text:#f0f0f2;--text2:#9ca3b4;--text3:#5f6678;
-  --amber:#e8922a;--amber2:#f5a623;--amber3:#ffc971;--amber-glow:rgba(232,146,42,.15);
-  --cyan:#2dd4bf;--cyan2:#5eead4;--cyan-glow:rgba(45,212,191,.12);
-  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.1);
-}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Segoe UI',sans-serif;
-  background:var(--bg);color:var(--text);
-  overflow-x:hidden;line-height:1.6;-webkit-font-smoothing:antialiased;
-}
-a{color:var(--amber2);text-decoration:none}
-a:hover{color:var(--amber3)}
-code{font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--bg3);padding:2px 6px;border-radius:4px}
+/* ==============================
+   HOME PAGE
+   ============================== */
 
-/* Noise texture */
-body::before{
-  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:.025;
-  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+/* --- Ambient background --- */
+.ambient{
+  position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+}
+.orb{
+  position:absolute;border-radius:50%;filter:blur(100px);
+  animation:orb-float 20s ease-in-out infinite alternate;
+}
+.orb-1{
+  width:600px;height:600px;top:-10%;left:15%;
+  background:radial-gradient(circle,rgba(229,164,15,.07),transparent 70%);
+}
+.orb-2{
+  width:500px;height:500px;top:20%;right:5%;
+  background:radial-gradient(circle,rgba(30,201,174,.05),transparent 70%);
+  animation-delay:-7s;animation-duration:25s;
+}
+.orb-3{
+  width:450px;height:450px;bottom:10%;left:30%;
+  background:radial-gradient(circle,rgba(147,102,255,.04),transparent 70%);
+  animation-delay:-13s;animation-duration:22s;
+}
+@keyframes orb-float{
+  0%{transform:translate(0,0) scale(1)}
+  33%{transform:translate(40px,-30px) scale(1.05)}
+  66%{transform:translate(-20px,40px) scale(.95)}
+  100%{transform:translate(30px,20px) scale(1.02)}
 }
 
-/* Background glows */
-.glow{position:fixed;border-radius:50%;filter:blur(140px);pointer-events:none;z-index:0}
-.glow-1{width:700px;height:700px;background:radial-gradient(circle,rgba(232,146,42,.1),transparent 70%);top:-300px;left:50%;transform:translateX(-50%)}
-.glow-2{width:500px;height:500px;background:radial-gradient(circle,rgba(45,212,191,.06),transparent 70%);bottom:30%;right:-200px}
-.glow-3{width:600px;height:600px;background:radial-gradient(circle,rgba(232,146,42,.05),transparent 70%);bottom:-200px;left:-100px}
-
-.container{max-width:1100px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
-
-/* -------- NAV -------- */
-nav{
-  position:fixed;top:0;left:0;right:0;z-index:100;
-  backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);
-  background:rgba(10,12,16,.75);border-bottom:1px solid var(--border);
+/* --- Hero --- */
+.hero{
+  position:relative;
+  padding:calc(var(--nav-h) + 100px) 0 60px;
+  text-align:center;
+  overflow:visible;
 }
-nav .container{display:flex;align-items:center;justify-content:space-between;height:64px}
-.nav-brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:-.02em}
-.nav-brand img{width:34px;height:34px;border-radius:9px;box-shadow:0 0 12px rgba(232,146,42,.2)}
-.nav-links{display:flex;gap:28px;align-items:center}
-.nav-links a{color:var(--text2);font-size:14px;font-weight:500;transition:color .2s}
-.nav-links a:hover{color:var(--text)}
-.nav-dl{
-  background:linear-gradient(135deg,var(--amber),#d97c0a);color:#fff!important;
-  padding:8px 22px;border-radius:10px;font-weight:600;font-size:14px;transition:all .2s;
-  box-shadow:0 0 16px rgba(232,146,42,.15);
-}
-.nav-dl:hover{transform:translateY(-1px);box-shadow:0 4px 24px rgba(232,146,42,.3);color:#fff!important}
-
-/* -------- HERO -------- */
-.hero{padding:140px 0 80px;text-align:center}
-.hero-icon{
-  width:140px;height:140px;border-radius:32px;margin:0 auto 40px;
-  box-shadow:
-    0 0 0 1px rgba(232,146,42,.15),
-    0 0 60px rgba(232,146,42,.12),
-    0 0 120px rgba(232,146,42,.06),
-    0 24px 80px rgba(0,0,0,.6);
-  animation:float 6s ease-in-out infinite;
-}
-@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
 .hero-badge{
   display:inline-flex;align-items:center;gap:8px;
-  background:rgba(232,146,42,.06);border:1px solid rgba(232,146,42,.18);
-  padding:6px 18px;border-radius:100px;font-size:13px;color:var(--amber2);
-  margin-bottom:32px;font-weight:500;
+  padding:5px 16px 5px 7px;
+  background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.06);
+  border-radius:100px;font-size:12px;font-weight:500;
+  color:var(--text2);margin-bottom:28px;
+  backdrop-filter:blur(12px);
+  transition:border-color .3s,background .3s;
 }
-.hero-badge .dot{width:6px;height:6px;background:var(--amber);border-radius:50%;animation:pulse 2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.8)}}
-.hero h1{
-  font-size:clamp(44px,7.5vw,76px);font-weight:800;letter-spacing:-.045em;
-  line-height:1.05;margin-bottom:20px;
-  background:linear-gradient(135deg,#fff 0%,#f0f0f2 35%,var(--amber3) 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+.hero-badge:hover{border-color:rgba(255,255,255,.1);background:rgba(255,255,255,.05)}
+.hero-badge-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--green);
+  box-shadow:0 0 8px rgba(45,213,91,.4);
+  animation:dot-pulse 2s ease infinite;
 }
-.hero p{font-size:19px;color:var(--text2);max-width:540px;margin:0 auto 44px;line-height:1.75}
-.hero p strong{color:var(--text);font-weight:600}
-.hero-actions{display:flex;gap:14px;justify-content:center;align-items:center;flex-wrap:wrap}
+@keyframes dot-pulse{0%,100%{opacity:1;box-shadow:0 0 8px rgba(45,213,91,.4)}50%{opacity:.5;box-shadow:0 0 4px rgba(45,213,91,.2)}}
 
-/* Download button - the star */
-.btn-download{
-  display:inline-flex;align-items:center;gap:12px;
-  background:linear-gradient(135deg,var(--amber),#c77a0a);
-  color:#fff;padding:18px 40px;border-radius:16px;
-  font-weight:700;font-size:17px;transition:all .25s;
-  border:none;cursor:pointer;position:relative;overflow:hidden;
-  box-shadow:0 0 0 1px rgba(232,146,42,.4),0 6px 30px rgba(232,146,42,.25);
+.hero h1{margin-bottom:20px}
+.hero .t-body-lg{
+  max-width:480px;margin:0 auto 40px;font-size:17px;
+  color:var(--text2);line-height:1.7;
 }
-.btn-download::before{
-  content:'';position:absolute;inset:0;
-  background:linear-gradient(135deg,rgba(255,255,255,.15),transparent 60%);
+.hero .btn-row{justify-content:center;margin-bottom:16px}
+
+.hero-sub{
+  display:flex;gap:24px;justify-content:center;flex-wrap:wrap;
+  margin-top:8px;
+}
+.hero-sub-item{
+  display:flex;align-items:center;gap:5px;
+  font-size:12px;color:var(--text3);font-weight:500;
+}
+.hero-sub-item svg{width:13px;height:13px;opacity:.4}
+
+/* --- Mockup --- */
+.mockup-wrap{
+  padding:60px 0 20px;
+  position:relative;
+}
+.mockup-label{
+  text-align:center;font-size:10px;font-weight:700;
+  letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text3);margin-bottom:20px;
+}
+.mockup-frame{
+  max-width:1020px;margin:0 auto;
+  perspective:2000px;position:relative;
+}
+.mockup-screen{
+  border-radius:12px;overflow:hidden;
+  transform:rotateX(2deg) scale(.98);
+  transition:transform .8s var(--ease),box-shadow .8s var(--ease);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.05),
+    0 20px 60px rgba(0,0,0,.5),
+    0 0 100px rgba(229,164,15,.03);
+  position:relative;
+}
+.mockup-screen:hover{
+  transform:rotateX(0) scale(1);
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.07),
+    0 40px 100px rgba(0,0,0,.6),
+    0 0 160px rgba(229,164,15,.05);
+}
+
+/* Reflection */
+.mockup-reflect{
+  max-width:1020px;margin:0 auto;
+  height:120px;
+  background:linear-gradient(to bottom,rgba(229,164,15,.02),transparent);
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.3),transparent);
+  -webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,.3),transparent);
+  border-radius:0 0 12px 12px;
+  transform:scaleY(-1) translateY(0);
+  opacity:.15;
   pointer-events:none;
 }
-.btn-download:hover{
-  transform:translateY(-2px);color:#fff;
-  box-shadow:0 0 0 1px rgba(232,146,42,.6),0 10px 50px rgba(232,146,42,.35);
-}
-.btn-download svg{width:20px;height:20px}
-.btn-download .size{font-weight:400;opacity:.7;font-size:14px}
 
-.btn-gh{
-  display:inline-flex;align-items:center;gap:10px;
-  background:var(--bg2);border:1px solid var(--border2);
-  color:var(--text2);padding:18px 32px;border-radius:16px;
-  font-weight:600;font-size:16px;transition:all .25s;
-}
-.btn-gh:hover{border-color:var(--text3);color:var(--text);transform:translateY(-2px)}
-.btn-gh svg{width:18px;height:18px}
-
-.hero-sub{margin-top:20px;font-size:13px;color:var(--text3);display:flex;gap:20px;justify-content:center;flex-wrap:wrap}
-.hero-sub span{display:flex;align-items:center;gap:5px}
-.hero-sub svg{opacity:.6}
-
-/* -------- MENU BAR DEMO -------- */
-.menubar-wrap{margin:72px auto 0;max-width:840px;position:relative}
-.menubar-glow{
-  position:absolute;inset:-20px -40px;
-  background:radial-gradient(ellipse at center,rgba(232,146,42,.06),transparent 70%);
-  filter:blur(30px);pointer-events:none;
-}
-.menubar{
+/* macOS desktop */
+.mac-wall{
   position:relative;
-  background:linear-gradient(180deg,rgba(18,21,28,.95),rgba(18,21,28,.7));
-  border:1px solid rgba(255,255,255,.07);
-  border-radius:12px;padding:10px 20px;
+  background:
+    radial-gradient(ellipse 80% 60% at 25% 75%,#1a0a3e 0%,transparent 55%),
+    radial-gradient(ellipse 50% 50% at 75% 25%,#0a2a4a 0%,transparent 45%),
+    radial-gradient(ellipse 60% 40% at 50% 50%,#0d1525 0%,transparent 60%),
+    linear-gradient(135deg,#040410,#080e1e,#0c1428,#0a0820,#030308);
+  min-height:440px;overflow:visible;
+}
+
+/* menu bar */
+.mb{
   display:flex;align-items:center;justify-content:space-between;
-  backdrop-filter:blur(10px);
-  box-shadow:0 20px 60px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.04);
+  height:25px;padding:0 14px;
+  background:rgba(0,0,0,.3);
+  backdrop-filter:blur(50px) saturate(2);
+  -webkit-backdrop-filter:blur(50px) saturate(2);
+  border-bottom:1px solid rgba(255,255,255,.03);
+  font-size:13px;font-weight:500;color:rgba(255,255,255,.88);
 }
-.mb-left{display:flex;align-items:center;gap:8px}
-.mb-logo{width:18px;height:18px;border-radius:4px;opacity:.8}
-.mb-apple{color:var(--text2);font-size:15px;margin-right:4px}
-.mb-app{color:var(--text2);font-size:13px;font-weight:600}
-.mb-right{display:flex;gap:14px;align-items:center;font-size:12px;font-weight:500;font-family:'SF Mono',SFMono-Regular,Menlo,monospace}
-.mb-w{display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:5px;transition:background .2s}
-.mb-w:hover{background:rgba(255,255,255,.05)}
-.mb-g{color:#4ade80}.mb-r{color:#f87171}.mb-c{color:var(--cyan)}.mb-a{color:var(--amber2)}.mb-m{color:var(--text2)}
-.mb-time{color:var(--text2);font-size:13px;font-weight:500;font-family:inherit}
+.mb-left{display:flex;align-items:center;gap:18px}
+.mb-apple{font-size:15px;opacity:.85}
+.mb-app{font-weight:600;font-size:13px}
+.mb-menus{display:flex;gap:14px;font-size:13px;color:rgba(255,255,255,.5);font-weight:400}
+.mb-right{display:flex;align-items:center;gap:10px;font-size:11px;font-family:var(--mono);font-weight:500}
+.mb-clock{
+  color:rgba(255,255,255,.78);font-family:var(--font);
+  font-weight:500;font-size:13px;font-variant-numeric:tabular-nums;
+}
 
-/* -------- STATS -------- */
-.stats{
-  display:flex;gap:0;justify-content:center;padding:80px 0;
-  border-bottom:1px solid var(--border);margin:0 auto;max-width:800px;
-}
-.stat{flex:1;text-align:center;position:relative}
-.stat+.stat::before{content:'';position:absolute;left:0;top:20%;height:60%;width:1px;background:var(--border2)}
-.stat-num{
-  font-size:52px;font-weight:800;letter-spacing:-.04em;
-  background:linear-gradient(135deg,var(--amber),var(--amber3));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-}
-.stat-label{font-size:13px;color:var(--text3);margin-top:4px;font-weight:500}
+.mb-w{white-space:nowrap}
+.mb-g{color:#32d74b}
+.mb-r{color:#ff453a}
+.mb-a{color:#ffd60a}
+.mb-d{color:rgba(255,255,255,.32)}
+.mb-wh{color:rgba(255,255,255,.78)}
 
-/* -------- SECTIONS -------- */
-section{padding:100px 0}
-.section-tag{
-  display:inline-flex;align-items:center;gap:6px;
-  font-size:12px;font-weight:700;color:var(--amber);
-  text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px;
+/* cycling */
+.mb-cyc{display:inline-block;position:relative;min-width:88px;text-align:right}
+.mb-cyc-i{
+  position:absolute;right:0;top:0;opacity:0;
+  transition:opacity .45s ease,transform .45s ease;
+  transform:translateY(3px);white-space:nowrap;
 }
-.section-tag .bar{width:20px;height:2px;background:var(--amber);border-radius:2px}
-.section-title{font-size:clamp(30px,4.5vw,46px);font-weight:800;letter-spacing:-.035em;line-height:1.12;margin-bottom:14px}
-.section-desc{font-size:17px;color:var(--text2);max-width:520px;line-height:1.7}
+.mb-cyc-i.on{opacity:1;transform:translateY(0);position:relative}
 
-/* -------- FEATURES -------- */
-.features{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px}
-.feat{
-  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
-  padding:28px;transition:all .35s;position:relative;overflow:hidden;
-}
-.feat:hover{border-color:rgba(232,146,42,.2);transform:translateY(-3px);box-shadow:0 16px 48px rgba(0,0,0,.3)}
-.feat::before{
-  content:'';position:absolute;top:0;left:0;right:0;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(232,146,42,.25),transparent);
-  opacity:0;transition:opacity .35s;
-}
-.feat:hover::before{opacity:1}
-.feat-icon{
-  width:44px;height:44px;border-radius:11px;
-  display:flex;align-items:center;justify-content:center;
-  font-size:20px;margin-bottom:18px;
-}
-.feat-icon.amber{background:rgba(232,146,42,.08);border:1px solid rgba(232,146,42,.15)}
-.feat-icon.cyan{background:rgba(45,212,191,.08);border:1px solid rgba(45,212,191,.15)}
-.feat h3{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}
-.feat p{font-size:13.5px;color:var(--text2);line-height:1.65}
+/* ticker scroll */
+.mb-scroll{display:inline-block;width:100px;overflow:hidden;vertical-align:bottom}
+.mb-scroll-in{display:inline-block;white-space:nowrap;animation:mb-scr 14s linear infinite}
+@keyframes mb-scr{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
 
-/* -------- WIDGET CATEGORIES -------- */
-.categories{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:56px}
-.cat{
-  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
-  padding:22px 16px;text-align:center;transition:all .3s;cursor:default;
-}
-.cat:hover{border-color:var(--border2);background:var(--bg3)}
-.cat-icon{font-size:26px;margin-bottom:10px;display:block}
-.cat-name{font-size:13px;font-weight:700;margin-bottom:3px}
-.cat-count{font-size:11px;color:var(--text3);line-height:1.5}
+/* sparkline */
+.mb-spark{display:inline-flex;align-items:flex-end;gap:1px;height:11px;vertical-align:middle;margin:0 2px}
+.mb-spark-bar{width:2px;border-radius:1px;background:var(--teal);transition:height .6s var(--ease)}
 
-/* -------- BENTO -------- */
-.bento{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;margin-top:56px}
+/* --- Popover --- */
+.pop{
+  position:absolute;top:25px;right:200px;width:270px;
+  background:rgba(26,26,30,.9);
+  backdrop-filter:blur(50px) saturate(2);
+  -webkit-backdrop-filter:blur(50px) saturate(2);
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:10px;
+  box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 0 .5px rgba(255,255,255,.04);
+  z-index:10;overflow:hidden;
+  animation:pop-in .4s var(--ease) both;animation-delay:.8s;
+}
+@keyframes pop-in{from{opacity:0;transform:translateY(-8px) scale(.96)}to{opacity:1;transform:none}}
+
+.pop-head{padding:12px 14px 10px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:center;justify-content:space-between}
+.pop-title{font-size:13px;font-weight:700;color:rgba(255,255,255,.88)}
+.pop-badge{font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;background:rgba(50,215,75,.1);color:#32d74b}
+
+.pop-price{padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.05)}
+.pop-price-big{font-family:var(--mono);font-size:26px;font-weight:700;color:#fff;letter-spacing:-.03em;line-height:1}
+.pop-price-chg{font-family:var(--mono);font-size:12px;color:#32d74b;margin-top:3px;font-weight:500}
+
+.pop-chart{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,.05);display:flex;align-items:flex-end;gap:2px;height:52px}
+.pop-bar{flex:1;border-radius:1.5px 1.5px 0 0;transition:height .4s var(--ease)}
+.pop-bar-g{background:#32d74b}
+.pop-bar-r{background:#ff453a}
+
+.pop-stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:rgba(255,255,255,.03)}
+.pop-stat{padding:8px 14px;background:rgba(26,26,30,.88)}
+.pop-stat-l{font-size:9px;font-weight:500;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px}
+.pop-stat-v{font-family:var(--mono);font-size:11px;font-weight:600;color:rgba(255,255,255,.75)}
+
+/* --- Float window --- */
+.fw{
+  position:absolute;bottom:32px;left:28px;width:280px;
+  background:rgba(24,24,28,.85);
+  backdrop-filter:blur(50px) saturate(2);
+  -webkit-backdrop-filter:blur(50px) saturate(2);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:10px;
+  box-shadow:0 24px 64px rgba(0,0,0,.5),0 0 0 .5px rgba(255,255,255,.03);
+  overflow:hidden;
+  animation:fw-in .5s var(--ease) both;animation-delay:1.2s;
+}
+@keyframes fw-in{from{opacity:0;transform:translateY(14px) scale(.96)}to{opacity:1;transform:none}}
+
+.fw-bar{display:flex;align-items:center;gap:6px;padding:10px 12px;background:rgba(255,255,255,.02);border-bottom:1px solid rgba(255,255,255,.05)}
+.fw-dot{width:10px;height:10px;border-radius:50%}
+.fw-dot-r{background:#ff5f57}
+.fw-dot-y{background:#febc2e}
+.fw-dot-g{background:#28c840}
+.fw-title{flex:1;text-align:center;font-size:11px;font-weight:600;color:rgba(255,255,255,.4);margin-right:30px}
+.fw-body{padding:12px}
+.fw-lbl{font-size:9px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:rgba(255,255,255,.25);margin-bottom:8px}
+.fw-rows{display:flex;flex-direction:column;gap:5px}
+.fw-row{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;
+  border-radius:7px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.03);
+  transition:background .2s;
+}
+.fw-row:hover{background:rgba(255,255,255,.04)}
+.fw-ico{
+  width:24px;height:24px;border-radius:5px;display:flex;align-items:center;
+  justify-content:center;font-size:11px;flex-shrink:0;
+}
+.fw-ico-a{background:rgba(229,164,15,.1);border:1px solid rgba(229,164,15,.12)}
+.fw-ico-t{background:rgba(30,201,174,.1);border:1px solid rgba(30,201,174,.12)}
+.fw-ico-p{background:rgba(147,102,255,.1);border:1px solid rgba(147,102,255,.12)}
+.fw-ico-r{background:rgba(255,71,87,.1);border:1px solid rgba(255,71,87,.12)}
+.fw-name{flex:1;font-size:11px;font-weight:600;color:rgba(255,255,255,.75)}
+.fw-val{font-family:var(--mono);font-size:10px;font-weight:500;color:rgba(255,255,255,.35)}
+.fw-tog{width:30px;height:16px;border-radius:8px;background:#32d74b;position:relative;flex-shrink:0}
+.fw-tog::after{content:'';position:absolute;top:2px;left:16px;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.fw-tog.off{background:rgba(255,255,255,.12)}
+.fw-tog.off::after{left:2px}
+
+/* --- Notification --- */
+.fn{
+  position:absolute;top:42px;right:20px;width:230px;
+  background:rgba(24,24,28,.85);
+  backdrop-filter:blur(50px) saturate(2);
+  -webkit-backdrop-filter:blur(50px) saturate(2);
+  border:1px solid rgba(255,255,255,.07);
+  border-radius:11px;
+  box-shadow:0 14px 40px rgba(0,0,0,.45);
+  padding:11px 13px;display:flex;align-items:flex-start;gap:9px;
+  animation:fn-in .4s var(--ease) both;animation-delay:2s;
+}
+@keyframes fn-in{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+.fn-ico{width:30px;height:30px;border-radius:7px;flex-shrink:0;overflow:hidden}
+.fn-ico img{width:100%;height:100%}
+.fn-body{flex:1;min-width:0}
+.fn-t{font-size:11px;font-weight:700;color:rgba(255,255,255,.85);margin-bottom:1px}
+.fn-b{font-size:10px;color:rgba(255,255,255,.4);line-height:1.4}
+.fn-time{font-size:9px;color:rgba(255,255,255,.2);flex-shrink:0;margin-top:1px}
+
+/* --- Mini chart in popover (sparkline SVG) --- */
+.mini-chart{padding:0 14px 10px}
+.mini-chart svg{width:100%;height:40px}
+.mini-chart path{fill:none;stroke:#32d74b;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.mini-chart .area{fill:url(#chartGrad);stroke:none;opacity:.3}
+
+/* --- Stats section --- */
+.stats-section{position:relative;z-index:1}
+.stats-row{display:flex;justify-content:center;gap:0;padding:72px 0}
+.stat{padding:0 48px;text-align:center;position:relative}
+.stat+.stat::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:1px;height:36px;background:var(--border);
+}
+.stat-val{
+  font-size:52px;font-weight:800;letter-spacing:-.05em;line-height:1;
+  margin-bottom:6px;font-variant-numeric:tabular-nums;
+}
+.stat-label{font-size:12px;color:var(--text3);font-weight:500}
+
+/* --- Logos/replaces --- */
+.replaces{text-align:center;padding:32px 0 80px;position:relative;z-index:1}
+.replaces-label{font-size:12px;color:var(--text3);font-weight:500;margin-bottom:16px}
+.replaces-row{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap}
+.replaces-pill{
+  font-size:12px;font-weight:500;color:var(--text3);
+  padding:7px 16px;border:1px solid var(--border);border-radius:100px;
+  transition:all .25s var(--ease);white-space:nowrap;
+}
+.replaces-pill:hover{color:var(--text2);border-color:var(--border-h);background:rgba(255,255,255,.02);transform:translateY(-1px)}
+
+/* --- Bento feature grid --- */
 .bento-card{
-  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
-  padding:28px;position:relative;overflow:hidden;transition:all .3s;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-xl);padding:36px;
+  position:relative;overflow:hidden;transition:all .4s var(--ease);
 }
-.bento-card:hover{border-color:rgba(232,146,42,.12)}
-.b-7{grid-column:span 7}.b-5{grid-column:span 5}.b-6{grid-column:span 6}.b-12{grid-column:span 12}
-.bento-card h3{font-size:18px;font-weight:700;margin-bottom:6px;letter-spacing:-.01em}
-.bento-card p{font-size:13.5px;color:var(--text2);line-height:1.6}
-.bento-preview{
-  margin-top:18px;background:var(--bg);border:1px solid var(--border);
-  border-radius:10px;padding:14px 16px;font-family:'SF Mono',monospace;font-size:12.5px;line-height:1.7;
+.bento-card::before{
+  content:'';position:absolute;inset:0;opacity:0;transition:opacity .4s;
+  background:radial-gradient(600px circle at var(--mouse-x,50%) var(--mouse-y,50%),rgba(255,255,255,.02),transparent 40%);
+}
+.bento-card:hover::before{opacity:1}
+.bento-card:hover{border-color:var(--border-h);transform:translateY(-3px);box-shadow:0 16px 64px rgba(0,0,0,.25)}
+.bento-card .t-label{margin-bottom:12px;display:block}
+.bento-card h3{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:8px}
+.bento-card p{font-size:14px;line-height:1.65;color:var(--text2);max-width:380px}
+.bento-visual{margin-top:24px}
+
+/* demo elements */
+.demo-pills{display:flex;flex-wrap:wrap;gap:6px}
+.demo-pill{
+  background:var(--bg);border:1px solid var(--border);border-radius:7px;
+  padding:6px 12px;font-size:11px;font-family:var(--mono);
+  color:var(--text2);transition:border-color .2s,transform .2s;
+}
+.demo-pill:hover{border-color:var(--border-h);transform:translateY(-1px)}
+
+.demo-bars{display:flex;flex-direction:column;gap:6px}
+.demo-bar{height:28px;border-radius:7px;transition:transform .3s var(--ease)}
+.demo-bar:hover{transform:scaleX(1.02)}
+
+.demo-term{
+  background:var(--bg);border:1px solid var(--border);border-radius:8px;
+  padding:14px 18px;font-family:var(--mono);font-size:11px;line-height:1.9;color:var(--text2);
+}
+.demo-term .p{color:var(--teal)}
+.demo-term .cursor{
+  display:inline-block;width:7px;height:13px;background:var(--amber-b);
+  animation:blink 1s step-end infinite;vertical-align:text-bottom;margin-left:2px;
+}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* --- Feature cards --- */
+.feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.feat-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-lg);padding:28px;
+  transition:all .35s var(--ease);position:relative;
+}
+.feat-card::after{
+  content:'';position:absolute;inset:-1px;border-radius:inherit;padding:1px;
+  background:linear-gradient(135deg,rgba(229,164,15,.1),transparent 50%,rgba(30,201,174,.1));
+  mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);
+  mask-composite:exclude;-webkit-mask-composite:xor;opacity:0;transition:opacity .35s;
+}
+.feat-card:hover::after{opacity:1}
+.feat-card:hover{transform:translateY(-3px);box-shadow:0 12px 48px rgba(0,0,0,.2)}
+.feat-card .icon-box{margin-bottom:16px}
+.feat-card h4{font-size:15px;font-weight:650;margin-bottom:6px;letter-spacing:-.01em}
+.feat-card p{font-size:13px;line-height:1.65;color:var(--text2)}
+
+/* --- How it works --- */
+.how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;counter-reset:step}
+.how-step{
+  background:var(--surface);padding:40px 32px;position:relative;
+  transition:background .3s;
+}
+.how-step:first-child{border-radius:var(--r-xl) 0 0 var(--r-xl)}
+.how-step:last-child{border-radius:0 var(--r-xl) var(--r-xl) 0}
+.how-step:hover{background:var(--surface2)}
+.how-num{
+  display:flex;align-items:center;justify-content:center;
+  width:32px;height:32px;border-radius:8px;
+  background:var(--amber-dim);border:1px solid rgba(229,164,15,.12);
+  font-size:13px;font-weight:700;color:var(--amber-b);
+  margin-bottom:18px;counter-increment:step;
+}
+.how-num::after{content:counter(step)}
+.how-step h4{font-size:16px;font-weight:700;margin-bottom:6px;letter-spacing:-.015em}
+.how-step p{font-size:13px;color:var(--text2);line-height:1.65}
+
+/* --- Testimonial/social proof --- */
+.proof{
+  text-align:center;padding:40px 0 0;
+}
+.proof-logos{
+  display:flex;align-items:center;justify-content:center;gap:32px;
+  opacity:.25;filter:grayscale(1);
+}
+.proof-logos span{
+  font-size:14px;font-weight:600;letter-spacing:-.01em;
 }
 
-/* Code block */
-.code-block{
-  background:var(--bg);border:1px solid var(--border);border-radius:10px;
-  padding:20px;margin-top:18px;overflow-x:auto;
-  font-family:'SF Mono',SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.85;
+/* --- CTA --- */
+.cta{position:relative;text-align:center;padding:140px 0 160px;overflow:hidden}
+.cta-glow{
+  position:absolute;bottom:-100px;left:50%;transform:translateX(-50%);
+  width:800px;height:500px;
+  background:radial-gradient(ellipse,rgba(229,164,15,.04),transparent 70%);
+  pointer-events:none;
 }
-.kw{color:#c084fc}.str{color:var(--cyan)}.tp{color:var(--amber2)}.fn{color:#60a5fa}
+.cta .t-label{display:block;margin-bottom:16px}
+.cta .t-heading{margin-bottom:12px}
+.cta .t-body-lg{max-width:400px;margin:0 auto 40px}
+.cta .btn-row{justify-content:center}
 
-/* Tags */
-.tags{margin-top:18px;display:flex;gap:6px;flex-wrap:wrap}
-.tag{
-  background:var(--bg);border:1px solid var(--border);
-  padding:5px 12px;border-radius:8px;font-size:11.5px;font-weight:500;color:var(--text2);
+/* --- Responsive --- */
+@media(max-width:960px){
+  .mb-menus{display:none}
+  .how-grid,.feat-grid{grid-template-columns:repeat(2,1fr)}
+  .how-step:first-child{border-radius:var(--r-xl) 0 0 0}
+  .how-step:last-child{border-radius:0 0 var(--r-xl) 0}
+  .bento{grid-template-columns:1fr !important}
+  .bento>*{grid-column:span 1 !important}
+  .pop{right:80px}
 }
-.tag.amber{border-color:rgba(232,146,42,.2);color:var(--amber2);background:rgba(232,146,42,.04)}
-.tag.cyan{border-color:rgba(45,212,191,.2);color:var(--cyan);background:rgba(45,212,191,.04)}
-
-/* Security badges */
-.sec-grid{margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
-.sec{
-  background:rgba(45,212,191,.04);border:1px solid rgba(45,212,191,.12);
-  padding:9px 12px;border-radius:8px;font-size:11.5px;color:var(--cyan);font-weight:500;
-  display:flex;align-items:center;gap:6px;
-}
-.sec::before{content:'';width:5px;height:5px;background:var(--cyan);border-radius:50%;flex-shrink:0}
-
-/* -------- CTA -------- */
-.cta{text-align:center;padding:120px 0 100px;position:relative}
-.cta-icon{
-  width:80px;height:80px;border-radius:20px;margin:0 auto 32px;
-  box-shadow:0 0 40px rgba(232,146,42,.12),0 16px 48px rgba(0,0,0,.4);
-}
-.cta h2{
-  font-size:clamp(34px,5.5vw,52px);font-weight:800;letter-spacing:-.035em;margin-bottom:14px;
-  background:linear-gradient(135deg,#fff 20%,var(--amber3) 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-}
-.cta p{font-size:17px;color:var(--text2);margin-bottom:44px;max-width:440px;margin-left:auto;margin-right:auto;line-height:1.7}
-
-/* -------- FOOTER -------- */
-footer{border-top:1px solid var(--border);padding:36px 0}
-.footer-inner{display:flex;align-items:center;justify-content:space-between}
-.footer-brand{display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px;color:var(--text2)}
-.footer-brand img{width:22px;height:22px;border-radius:6px;opacity:.7}
-.footer-links{display:flex;gap:24px}
-.footer-links a{color:var(--text3);font-size:13px;font-weight:500;transition:color .2s}
-.footer-links a:hover{color:var(--text2)}
-
-/* -------- RESPONSIVE -------- */
-@media(max-width:900px){
-  .features{grid-template-columns:repeat(2,1fr)}
-  .categories{grid-template-columns:repeat(3,1fr)}
-  .bento-card{grid-column:span 12!important}
-  .menubar-wrap{display:none}
-  .sec-grid{grid-template-columns:1fr}
-}
-@media(max-width:600px){
-  .features{grid-template-columns:1fr}
-  .categories{grid-template-columns:repeat(2,1fr)}
-  .hero-actions{flex-direction:column;width:100%}
-  .btn-download,.btn-gh{width:100%;justify-content:center}
-  .nav-links a:not(.nav-dl){display:none}
-  .stats{flex-direction:column;gap:32px}
+@media(max-width:640px){
+  .stats-row{flex-direction:column;gap:28px}
   .stat+.stat::before{display:none}
-  .footer-inner{flex-direction:column;gap:16px}
-  .hero-sub{flex-direction:column;align-items:center;gap:8px}
+  .stat{padding:0}
+  .how-grid,.feat-grid{grid-template-columns:1fr}
+  .how-step{border-radius:0 !important}
+  .how-step:first-child{border-radius:var(--r-xl) var(--r-xl) 0 0 !important}
+  .how-step:last-child{border-radius:0 0 var(--r-xl) var(--r-xl) !important}
+  .mb-right{gap:8px}
+  .mb-scroll{width:72px}
+  .pop{display:none}
+  .fw{display:none}
+  .fn{display:none}
 }
-
-/* Scroll reveal */
-.reveal{opacity:0;transform:translateY(24px);transition:opacity .5s ease-out,transform .5s ease-out}
-.reveal.visible{opacity:1;transform:translateY(0)}
 </style>
 </head>
 <body>
 
-<div class="glow glow-1"></div>
-<div class="glow glow-2"></div>
-<div class="glow glow-3"></div>
+<!-- Ambient orbs -->
+<div class="ambient">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+</div>
 
-<!-- NAV -->
-<nav>
+<div class="grid-bg"></div>
+
+<!-- Nav -->
+<nav class="nav">
   <div class="container">
-    <div class="nav-brand">
-      <img src="icon.png" alt="Barista">
-      Barista
+    <div class="nav-left">
+      <a href="./" class="nav-brand"><img src="icon.png" alt="Barista">Barista</a>
+      <ul class="nav-menu" id="navMenu">
+        <li><a href="./" class="active">Home</a></li>
+        <li><a href="features.html">Features</a></li>
+        <li><a href="widgets.html">Widgets</a></li>
+        <li><a href="developers.html">Developers</a></li>
+      </ul>
     </div>
-    <div class="nav-links">
-      <a href="#features">Features</a>
-      <a href="#widgets">Widgets</a>
-      <a href="#developers">Developers</a>
-      <a href="https://github.com/noamsmall18/barista" target="_blank">GitHub</a>
-      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="nav-dl">Download</a>
+    <div class="nav-right">
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="nav-gh">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="nav-cta">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Download
+      </a>
+      <button class="nav-toggle" onclick="document.getElementById('navMenu').classList.toggle('open')">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
     </div>
   </div>
 </nav>
 
-<!-- HERO -->
+<!-- Hero -->
 <section class="hero">
   <div class="container">
-    <img src="icon.png" alt="Barista" class="hero-icon">
-    <div class="hero-badge">
-      <span class="dot"></span>
-      Open source &middot; Free forever
+    <div class="hero-badge" data-r>
+      <span class="hero-badge-dot"></span>
+      v1.0 &middot; Open Source &middot; 12 Premium Widgets
     </div>
-    <h1>Your menu bar,<br>your&nbsp;rules.</h1>
-    <p><strong>52 widgets.</strong> Menu bar styling. Script support. Barista is the most powerful menu bar platform for macOS.</p>
-    <div class="hero-actions">
-      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="btn-download">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+    <h1 class="t-hero" data-r>Your menu bar,<br><span class="t-gradient">reimagined.</span></h1>
+    <p class="t-body-lg" data-r>12 perfectly crafted premium widgets. Menu bar styling. xbar compatibility. One app replaces six. Built with Swift, zero dependencies.</p>
+    <div class="btn-row" data-r>
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download for macOS
-        <span class="size">(2.2 MB)</span>
       </a>
-      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-gh">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        Star on GitHub
+      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn btn-secondary">
+        <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        View Source
       </a>
     </div>
-    <div class="hero-sub">
-      <span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        macOS 13+ (Apple Silicon)
-      </span>
-      <span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Security hardened
-      </span>
-      <span>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-        Zero dependencies
-      </span>
-    </div>
-
-    <!-- Menu bar mockup -->
-    <div class="menubar-wrap">
-      <div class="menubar-glow"></div>
-      <div class="menubar">
-        <div class="mb-left">
-          <span class="mb-apple"></span>
-          <img src="icon.png" alt="" class="mb-logo">
-          <span class="mb-app">Barista</span>
-        </div>
-        <div class="mb-right">
-          <span class="mb-w mb-g">&#9650; AAPL $198.42 +1.2%</span>
-          <span class="mb-w mb-r">&#9660; TSLA $162.10 -0.8%</span>
-          <span class="mb-w mb-c">&#9749; 142mg</span>
-          <span class="mb-w mb-a">&#127813; 25m</span>
-          <span class="mb-w" style="color:#c084fc">&#128187; 23%</span>
-          <span class="mb-w mb-m">72&#176;F</span>
-          <span class="mb-time">Sun 4:20 PM</span>
-        </div>
-      </div>
+    <p style="font-size:12px;color:var(--text3);margin-top:4px;margin-bottom:12px" data-r>
+      First time? <a href="#install" style="color:var(--amber-b);text-decoration:underline;text-underline-offset:3px">See installation guide</a> &middot; macOS 13+ &middot; Apple Silicon &middot; 3.3 MB
+    </p>
+    <div class="hero-sub" data-r>
+      <span class="hero-sub-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>macOS 13+</span>
+      <span class="hero-sub-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Sandboxed</span>
+      <span class="hero-sub-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>MIT License</span>
+      <span class="hero-sub-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12l2 2 4-4"/></svg>Apple Silicon (M1+)</span>
     </div>
   </div>
 </section>
 
-<!-- STATS -->
-<div class="stats reveal">
-  <div class="stat"><div class="stat-num">52</div><div class="stat-label">Built-in widgets</div></div>
-  <div class="stat"><div class="stat-num">12</div><div class="stat-label">Categories</div></div>
-  <div class="stat"><div class="stat-num">18K</div><div class="stat-label">Lines of Swift</div></div>
-  <div class="stat"><div class="stat-num">0</div><div class="stat-label">Dependencies</div></div>
+<!-- Mockup -->
+<section class="mockup-wrap">
+  <div class="container">
+    <div class="mockup-label" data-r>Live preview</div>
+    <div class="mockup-frame" data-r-scale>
+      <div class="mockup-screen">
+        <div class="mac-wall">
+
+          <!-- Menu bar -->
+          <div class="mb">
+            <div class="mb-left">
+              <span class="mb-apple"></span>
+              <span class="mb-app">Finder</span>
+              <div class="mb-menus"><span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span><span>Help</span></div>
+            </div>
+            <div class="mb-right">
+              <!-- Stock -->
+              <span class="mb-w mb-g">AAPL +1.19%</span>
+              <!-- Crypto cycling -->
+              <span class="mb-w mb-cyc" id="cryptoCyc">
+                <span class="mb-cyc-i on mb-g">BTC $67,241</span>
+                <span class="mb-cyc-i mb-r">ETH $3,182</span>
+                <span class="mb-cyc-i mb-g">SOL $148.20</span>
+              </span>
+              <!-- CPU sparkline -->
+              <span class="mb-w mb-wh" style="display:inline-flex;align-items:center;gap:3px">
+                <span id="cpuPct">23%</span>
+                <span class="mb-spark" id="cpuSpark">
+                  <span class="mb-spark-bar" style="height:40%"></span>
+                  <span class="mb-spark-bar" style="height:65%"></span>
+                  <span class="mb-spark-bar" style="height:35%"></span>
+                  <span class="mb-spark-bar" style="height:55%"></span>
+                  <span class="mb-spark-bar" style="height:80%"></span>
+                  <span class="mb-spark-bar" style="height:45%"></span>
+                  <span class="mb-spark-bar" style="height:60%"></span>
+                  <span class="mb-spark-bar" style="height:30%"></span>
+                </span>
+              </span>
+              <!-- Sports cycling -->
+              <span class="mb-w mb-cyc" id="sportsCyc">
+                <span class="mb-cyc-i on mb-g">LAL 108-102</span>
+                <span class="mb-cyc-i mb-a">GSW 94-91 Q3</span>
+                <span class="mb-cyc-i mb-d">NYK vs PHI 7:30</span>
+              </span>
+              <!-- News scroll -->
+              <span class="mb-scroll">
+                <span class="mb-scroll-in mb-d">Fed holds rates &middot; AAPL beats &middot; SpaceX launch &middot; Fed holds rates &middot; AAPL beats &middot; SpaceX launch &middot;&nbsp;</span>
+              </span>
+              <!-- Pomodoro -->
+              <span class="mb-w mb-r" id="pomTimer">18:42</span>
+              <!-- Clock -->
+              <span class="mb-clock" id="liveClock">Sun 4:20 PM</span>
+            </div>
+          </div>
+
+          <!-- Stock popover -->
+          <div class="pop">
+            <div class="pop-head">
+              <span class="pop-title">Apple Inc.</span>
+              <span class="pop-badge">Open</span>
+            </div>
+            <div class="pop-price">
+              <div class="pop-price-big">$198.42</div>
+              <div class="pop-price-chg">+2.34 (1.19%)</div>
+            </div>
+            <!-- SVG sparkline chart -->
+            <div class="mini-chart">
+              <svg viewBox="0 0 242 40" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#32d74b" stop-opacity=".3"/>
+                    <stop offset="100%" stop-color="#32d74b" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path class="area" d="M0,32 L12,28 L24,30 L36,24 L48,26 L60,20 L72,22 L84,18 L96,20 L108,14 L120,16 L132,12 L144,14 L156,10 L168,12 L180,8 L192,10 L204,6 L216,8 L228,4 L242,2 L242,40 L0,40 Z"/>
+                <path d="M0,32 L12,28 L24,30 L36,24 L48,26 L60,20 L72,22 L84,18 L96,20 L108,14 L120,16 L132,12 L144,14 L156,10 L168,12 L180,8 L192,10 L204,6 L216,8 L228,4 L242,2"/>
+              </svg>
+            </div>
+            <div class="pop-stats">
+              <div class="pop-stat"><div class="pop-stat-l">Open</div><div class="pop-stat-v">$196.08</div></div>
+              <div class="pop-stat"><div class="pop-stat-l">High</div><div class="pop-stat-v">$199.10</div></div>
+              <div class="pop-stat"><div class="pop-stat-l">Low</div><div class="pop-stat-v">$195.72</div></div>
+              <div class="pop-stat"><div class="pop-stat-l">Vol</div><div class="pop-stat-v">52.4M</div></div>
+              <div class="pop-stat"><div class="pop-stat-l">Mkt Cap</div><div class="pop-stat-v">$3.04T</div></div>
+              <div class="pop-stat"><div class="pop-stat-l">P/E</div><div class="pop-stat-v">32.8x</div></div>
+            </div>
+          </div>
+
+          <!-- Settings window -->
+          <div class="fw">
+            <div class="fw-bar">
+              <div class="fw-dot fw-dot-r"></div>
+              <div class="fw-dot fw-dot-y"></div>
+              <div class="fw-dot fw-dot-g"></div>
+              <span class="fw-title">Barista Settings</span>
+            </div>
+            <div class="fw-body">
+              <div class="fw-lbl">Active Widgets</div>
+              <div class="fw-rows">
+                <div class="fw-row">
+                  <div class="fw-ico fw-ico-a"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f4be24" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/></svg></div>
+                  <span class="fw-name">Stock Ticker</span>
+                  <span class="fw-val">AAPL</span>
+                  <div class="fw-tog"></div>
+                </div>
+                <div class="fw-row">
+                  <div class="fw-ico fw-ico-t"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#1ec9ae" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/></svg></div>
+                  <span class="fw-name">CPU Monitor</span>
+                  <span class="fw-val">23%</span>
+                  <div class="fw-tog"></div>
+                </div>
+                <div class="fw-row">
+                  <div class="fw-ico fw-ico-r"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#ff4757" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+                  <span class="fw-name">Pomodoro</span>
+                  <span class="fw-val">18:42</span>
+                  <div class="fw-tog"></div>
+                </div>
+                <div class="fw-row">
+                  <div class="fw-ico fw-ico-p"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#9366ff" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 18a6 6 0 100-12"/></svg></div>
+                  <span class="fw-name">Live Scores</span>
+                  <span class="fw-val">NBA</span>
+                  <div class="fw-tog"></div>
+                </div>
+                <div class="fw-row">
+                  <div class="fw-ico fw-ico-a"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f4be24" stroke-width="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg></div>
+                  <span class="fw-name">Weather</span>
+                  <span class="fw-val">72&#176;F</span>
+                  <div class="fw-tog off"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Notification -->
+          <div class="fn">
+            <div class="fn-ico"><img src="icon.png" alt=""></div>
+            <div class="fn-body">
+              <div class="fn-t">Barista</div>
+              <div class="fn-b">Break starts in 5 min</div>
+            </div>
+            <span class="fn-time">now</span>
+          </div>
+
+        </div>
+      </div>
+      <!-- Reflection -->
+      <div class="mockup-reflect"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Stats -->
+<section class="stats-section">
+  <div class="container">
+    <div class="divider"></div>
+    <div class="stats-row" data-r-stagger>
+      <div class="stat"><div class="stat-val t-gradient"><span class="counter" data-to="12">0</span></div><div class="stat-label">Premium Widgets</div></div>
+      <div class="stat"><div class="stat-val t-gradient"><span class="counter" data-to="8">0</span></div><div class="stat-label">Categories</div></div>
+      <div class="stat"><div class="stat-val t-gradient"><span class="counter" data-to="18">0</span>K</div><div class="stat-label">Lines of Swift</div></div>
+      <div class="stat"><div class="stat-val t-gradient"><span class="counter" data-to="0">0</span></div><div class="stat-label">Dependencies</div></div>
+    </div>
+    <div class="divider"></div>
+  </div>
+</section>
+
+<!-- Replaces -->
+<div class="replaces" data-r>
+  <div class="container">
+    <div class="replaces-label">One app replaces</div>
+    <div class="replaces-row" data-r-stagger>
+      <span class="replaces-pill">iStat Menus</span>
+      <span class="replaces-pill">Dato</span>
+      <span class="replaces-pill">Amphetamine</span>
+      <span class="replaces-pill">xbar / SwiftBar</span>
+      <span class="replaces-pill">Bartender / Ice</span>
+      <span class="replaces-pill">NightOwl</span>
+    </div>
+  </div>
 </div>
 
-<!-- FEATURES -->
-<section id="features">
+<!-- Bento Features -->
+<section class="section-lg">
   <div class="container">
-    <div class="section-tag"><span class="bar"></span> Features</div>
-    <h2 class="section-title">Everything in your menu bar.</h2>
-    <p class="section-desc">Stocks, weather, system stats, calendar, developer tools, sports scores, and more. Click any widget for a rich interactive dropdown.</p>
+    <div class="section-header section-header-center" data-r>
+      <span class="t-label">Platform</span>
+      <h2 class="t-heading">Everything you need<br>in <span class="t-gradient">the menu bar.</span></h2>
+      <p class="t-body-lg">12 premium widgets across finance, system, weather, productivity, music, time, sports, and utility.</p>
+    </div>
 
-    <div class="features">
-      <div class="feat reveal">
-        <div class="feat-icon amber">&#127912;</div>
-        <h3>Menu Bar Styling</h3>
-        <p>Tint your menu bar with solid colors, gradients, time-based dynamic themes, or frosted glass effects. Unique to Barista.</p>
+    <div class="bento" style="grid-template-columns:7fr 5fr">
+      <div style="grid-column:span 1">
+        <div class="bento-card" data-r>
+          <span class="t-label" style="color:var(--amber)">12 Premium Widgets</span>
+          <h3>Quality over quantity.</h3>
+          <p>12 perfectly crafted widgets across 8 categories - finance, system, weather, productivity, music, time, sports, and utility.</p>
+          <div class="bento-visual">
+            <div class="demo-pills">
+              <div class="demo-pill"><span style="color:var(--green)">AAPL</span> +1.2%</div>
+              <div class="demo-pill">23% CPU</div>
+              <div class="demo-pill">8.2 GB/16</div>
+              <div class="demo-pill">72&#176;F Sunny</div>
+              <div class="demo-pill" style="color:var(--red)">25:00</div>
+              <div class="demo-pill"><span style="color:var(--green)">LAL 108</span>-102</div>
+              <div class="demo-pill">Now Playing</div>
+              <div class="demo-pill">NYC 2:30 AM</div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="feat reveal">
-        <div class="feat-icon cyan">&#128200;</div>
-        <h3>Scrolling Stock Ticker</h3>
-        <p>Real-time scrolling ticker with color-coded gains and losses. CVDisplayLink-powered smooth 60fps animation.</p>
+      <div style="grid-column:span 1">
+        <div class="bento-card" data-r>
+          <span class="t-label" style="color:var(--teal)">Unique</span>
+          <h3>Menu bar styling.</h3>
+          <p>Colors, gradients, frosted glass. No other app lets you style the menu bar itself.</p>
+          <div class="bento-visual">
+            <div class="demo-bars">
+              <div class="demo-bar" style="background:linear-gradient(90deg,#0a0a1a,#1a1a3e,#2a2a5e)"></div>
+              <div class="demo-bar" style="background:linear-gradient(90deg,#e5a40f,#f4be24,#ffd700)"></div>
+              <div class="demo-bar" style="background:linear-gradient(90deg,#0d7377,#14a3a8,#1ec9ae)"></div>
+              <div class="demo-bar" style="background:linear-gradient(90deg,#2d1b69,#5b21b6,#9366ff)"></div>
+              <div class="demo-bar" style="background:linear-gradient(90deg,#7f1d1d,#b91c1c,#ff4757)"></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="feat reveal">
-        <div class="feat-icon amber">&#128187;</div>
-        <h3>System Monitoring</h3>
-        <p>CPU, RAM, GPU, temperature sensors, fan speeds, network, disk, battery, Bluetooth devices, top processes.</p>
+    </div>
+
+    <div class="bento" style="grid-template-columns:5fr 7fr;margin-top:16px">
+      <div style="grid-column:span 1">
+        <div class="bento-card" data-r>
+          <span class="t-label" style="color:var(--purple)">Extensible</span>
+          <h3>xbar scripts.</h3>
+          <p>Run any shell script. Full xbar/SwiftBar format compatibility.</p>
+          <div class="bento-visual">
+            <div class="demo-term">
+              <div><span class="p">$</span> echo "Deploy | color=green"</div>
+              <div><span class="p">$</span> echo "---"</div>
+              <div><span class="p">$</span> echo "Status: Live"<span class="cursor"></span></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="feat reveal">
-        <div class="feat-icon cyan">&#128221;</div>
-        <h3>Script Widgets</h3>
-        <p>Full xbar/SwiftBar compatibility. Shell scripts render to the menu bar with colors, submenus, and SF Symbols.</p>
-      </div>
-      <div class="feat reveal">
-        <div class="feat-icon amber">&#128197;</div>
-        <h3>Calendar & Meetings</h3>
-        <p>Mini calendar grid with event dots, next meeting countdown, one-click join for Zoom, Meet, and Teams links.</p>
-      </div>
-      <div class="feat reveal">
-        <div class="feat-icon cyan">&#9889;</div>
-        <h3>Profiles</h3>
-        <p>Save widget layouts as named profiles. Quick-switch between Work, Home, Presentation, and Developer setups.</p>
+      <div style="grid-column:span 1">
+        <div class="bento-card" data-r>
+          <span class="t-label" style="color:var(--amber)">System</span>
+          <h3>Deep system monitoring.</h3>
+          <p>CPU usage, memory, network speeds, and battery health - all in your menu bar.</p>
+          <div class="bento-visual">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+              <div class="demo-pill" style="text-align:center;justify-content:center"><span style="color:var(--green)">CPU</span>&nbsp;23%</div>
+              <div class="demo-pill" style="text-align:center;justify-content:center"><span style="color:var(--amber-b)">RAM</span>&nbsp;8.2G</div>
+              <div class="demo-pill" style="text-align:center;justify-content:center"><span style="color:var(--teal)">NET</span>&nbsp;42Mb</div>
+              <div class="demo-pill" style="text-align:center;justify-content:center"><span style="color:var(--green)">BAT</span>&nbsp;87%</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- WIDGETS -->
-<section id="widgets" style="padding-top:40px">
+<!-- How to install -->
+<section class="section" id="install">
   <div class="container">
-    <div class="section-tag"><span class="bar"></span> Widget Gallery</div>
-    <h2 class="section-title">52 widgets. 12 categories.</h2>
-    <p class="section-desc">From finance to fitness, developer tools to dad jokes. Every widget is configurable with a rich dropdown.</p>
+    <div class="section-header section-header-center" data-r>
+      <span class="t-label">Install</span>
+      <h2 class="t-heading">Up and running<br>in <span class="t-gradient-cool">60 seconds.</span></h2>
+      <p class="t-body-lg">Barista is distributed as a standalone .app. No installer, no account, no subscription.</p>
+    </div>
+    <div class="how-grid" data-r-stagger>
+      <div class="how-step">
+        <div class="how-num"></div>
+        <h4>Download the DMG</h4>
+        <p>Click <strong>Download for macOS</strong> above to get <strong>Barista.dmg</strong>. Double-click the file to open the disk image.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-num"></div>
+        <h4>Drag to Applications</h4>
+        <p>You'll see <strong>Barista.app</strong> and an <strong>Applications</strong> shortcut. Drag the app onto the Applications folder. That's the whole install.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-num"></div>
+        <h4>Open with Right-Click</h4>
+        <p>On first launch, <strong>right-click</strong> Barista in Applications and choose <strong>Open</strong>, then click <strong>Open</strong> in the dialog. You only need to do this once.</p>
+      </div>
+    </div>
 
-    <div class="categories">
-      <div class="cat reveal"><span class="cat-icon">&#128176;</span><div class="cat-name">Finance</div><div class="cat-count">Stock Ticker, Crypto, Forex, Market Status</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128187;</span><div class="cat-name">System</div><div class="cat-count">CPU, RAM, GPU, Temp, Network, Battery +5</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#9989;</span><div class="cat-name">Productivity</div><div class="cat-count">Pomodoro, Calendar, Focus, Clipboard +5</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128336;</span><div class="cat-name">Time & Calendar</div><div class="cat-count">World Clock, Countdown, Calendar Grid +2</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#127780;</span><div class="cat-name">Weather</div><div class="cat-count">Weather, Sunrise, Air Quality, UV Index</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128421;</span><div class="cat-name">Developer</div><div class="cat-count">Git Branch, Docker, Server Ping</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#127922;</span><div class="cat-name">Fun & Lifestyle</div><div class="cat-count">Quotes, Moon, Jokes, Dice, Caffeine</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#9917;</span><div class="cat-name">Sports</div><div class="cat-count">Live Scores, F1 Standings, Soccer</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128240;</span><div class="cat-name">Social</div><div class="cat-count">Hacker News, GitHub Notifications</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#127925;</span><div class="cat-name">Music</div><div class="cat-count">Now Playing with playback controls</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128154;</span><div class="cat-name">Health</div><div class="cat-count">Water Reminder, Stand Reminder</div></div>
-      <div class="cat reveal"><span class="cat-icon">&#128295;</span><div class="cat-name">Utility</div><div class="cat-count">Keep Awake, Dark Mode, Script Runner</div></div>
+    <!-- Gatekeeper callout -->
+    <div style="max-width:680px;margin:40px auto 0" data-r>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px 28px;display:flex;gap:16px;align-items:flex-start">
+        <div style="width:36px;height:36px;border-radius:9px;background:rgba(229,164,15,.08);border:1px solid rgba(229,164,15,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--amber-b)" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:650;margin-bottom:4px">macOS Gatekeeper notice</div>
+          <p style="font-size:13px;color:var(--text2);line-height:1.65;margin:0">
+            Barista is open source and ad-hoc signed. On first launch, macOS will show
+            <em>"Barista can't be opened because Apple cannot check it for malicious software."</em>
+            This is normal for apps distributed outside the App Store. Right-click and choose Open to bypass this. Alternatively, go to
+            <strong>System Settings &gt; Privacy &amp; Security</strong> and click <strong>Open Anyway</strong>.
+            You can <a href="https://github.com/noamsmall18/barista" style="color:var(--amber-b);text-decoration:underline;text-underline-offset:3px">inspect the full source code on GitHub</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terminal alternative -->
+    <div style="max-width:680px;margin:16px auto 0" data-r>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:24px 28px;display:flex;gap:16px;align-items:flex-start">
+        <div style="width:36px;height:36px;border-radius:9px;background:rgba(30,201,174,.08);border:1px solid rgba(30,201,174,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--teal)" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:650;margin-bottom:4px">Prefer the terminal?</div>
+          <p style="font-size:13px;color:var(--text2);line-height:1.65;margin:0 0 10px">
+            Download, mount, copy, and open - all in one go:
+          </p>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-family:var(--mono);font-size:11.5px;line-height:1.8;color:var(--text2);overflow-x:auto;white-space:pre">curl -sL https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg -o /tmp/Barista.dmg
+hdiutil attach /tmp/Barista.dmg -nobrowse -quiet
+cp -R /Volumes/Barista/Barista.app /Applications/
+hdiutil detach /Volumes/Barista -quiet
+xattr -cr /Applications/Barista.app
+open /Applications/Barista.app</div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<!-- DEVELOPERS -->
-<section id="developers" style="padding-top:40px">
+<!-- More features -->
+<section class="section">
   <div class="container">
-    <div class="section-tag"><span class="bar"></span> For Developers</div>
-    <h2 class="section-title" style="margin-bottom:0">Extend it. Script it. Build on it.</h2>
-
-    <div class="bento">
-      <div class="bento-card b-7 reveal">
-        <h3>Build your own widgets</h3>
-        <p>Implement <code>BaristaWidget</code>, register it, done. Full access to AppKit, IOKit, EventKit, and every macOS API.</p>
-        <div class="code-block">
-<span class="kw">class</span> <span class="tp">MyWidget</span>: <span class="tp">BaristaWidget</span> {
-    <span class="kw">static let</span> widgetID = <span class="str">"my-widget"</span>
-    <span class="kw">static let</span> displayName = <span class="str">"My Widget"</span>
-
-    <span class="kw">func</span> <span class="fn">render</span>() -> <span class="tp">WidgetDisplayMode</span> {
-        <span class="kw">return</span> .<span class="fn">text</span>(<span class="str">"Hello World"</span>)
-    }
-}
-        </div>
+    <div class="divider" style="margin-bottom:80px"></div>
+    <div class="section-header section-header-center" data-r>
+      <span class="t-label">Capabilities</span>
+      <h2 class="t-heading">Built for power users.</h2>
+    </div>
+    <div class="feat-grid" data-r-stagger>
+      <div class="feat-card">
+        <div class="icon-box amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+        <h4>Calendar & Meetings</h4>
+        <p>Mini calendar grid, event previews, one-click Zoom/Meet join.</p>
       </div>
-      <div class="bento-card b-5 reveal">
-        <h3>xbar Compatible</h3>
-        <p>Drop in any xbar/SwiftBar plugin. Full format support: pipe params, submenus, colors, images, actions.</p>
-        <div class="bento-preview">
-          <div style="color:var(--amber2)">#!/bin/bash</div>
-          <div><span style="color:var(--cyan)">echo</span> "Hello | color=green"</div>
-          <div>echo "---"</div>
-          <div><span style="color:var(--cyan)">echo</span> "Open Site | href=..."</div>
-          <div><span style="color:var(--cyan)">echo</span> "--Submenu | color=blue"</div>
-        </div>
+      <div class="feat-card">
+        <div class="icon-box teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div>
+        <h4>Productivity</h4>
+        <p>Pomodoro timer, focus task pinning, clipboard peek, keep-awake.</p>
       </div>
-      <div class="bento-card b-5 reveal">
-        <h3>Pure Native Stack</h3>
-        <p>Swift + AppKit. No Electron, no web views, no frameworks. Compiles with <code>swift build</code> in under 5 seconds.</p>
-        <div class="tags">
-          <span class="tag amber">Swift 5.9</span>
-          <span class="tag amber">AppKit</span>
-          <span class="tag amber">SPM</span>
-          <span class="tag cyan">IOKit</span>
-          <span class="tag cyan">EventKit</span>
-          <span class="tag cyan">CoreGraphics</span>
-        </div>
+      <div class="feat-card">
+        <div class="icon-box purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+        <h4>Profiles</h4>
+        <p>Save widget layouts as profiles. Work, Home, Presentation - one click.</p>
       </div>
-      <div class="bento-card b-7 reveal">
-        <h3>Security Hardened</h3>
-        <p>Open source and auditable. Every network request, script execution, and system call is locked down.</p>
-        <div class="sec-grid">
-          <div class="sec">HTTPS enforced on all requests</div>
-          <div class="sec">Shell whitelist for script execution</div>
-          <div class="sec">Sanitized inputs on all commands</div>
-        </div>
+      <div class="feat-card">
+        <div class="icon-box teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 10h-1.26A8 8 0 109 20h9a5 5 0 000-10z"/></svg></div>
+        <h4>Weather & AQI</h4>
+        <p>Temperature, conditions, air quality, UV index, sunrise/sunset.</p>
+      </div>
+      <div class="feat-card">
+        <div class="icon-box amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <h4>Live Sports</h4>
+        <p>NBA, NFL, MLB, NHL, soccer scores. F1 standings. Auto-cycling.</p>
+      </div>
+      <div class="feat-card">
+        <div class="icon-box purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></div>
+        <h4>Developer Tools</h4>
+        <p>Docker status, GitHub notifications, server ping, custom scripts.</p>
       </div>
     </div>
   </div>
@@ -509,60 +887,63 @@ footer{border-top:1px solid var(--border);padding:36px 0}
 
 <!-- CTA -->
 <section class="cta">
-  <div class="container">
-    <img src="icon.png" alt="Barista" class="cta-icon">
-    <h2>Ready to brew?</h2>
-    <p>Download Barista and make your menu bar actually useful. Free, open source, no account required.</p>
-    <div class="hero-actions">
-      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.zip" class="btn-download">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  <div class="cta-glow"></div>
+  <div class="container" data-r>
+    <span class="t-label">Open Source</span>
+    <h2 class="t-heading">Ready to <span class="t-gradient">brew?</span></h2>
+    <p class="t-body-lg">Free, open source, no account required. Download and go.</p>
+    <div class="btn-row">
+      <a href="https://github.com/noamsmall18/barista/releases/download/v1.0.0/Barista.dmg" class="btn btn-primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Download for macOS
-        <span class="size">(2.2 MB)</span>
       </a>
-      <a href="https://github.com/noamsmall18/barista" target="_blank" class="btn-gh">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        View Source
-      </a>
+      <a href="widgets.html" class="btn btn-secondary">Browse all 12 widgets</a>
     </div>
   </div>
 </section>
 
-<!-- FOOTER -->
-<footer>
+<!-- Footer -->
+<footer class="footer">
   <div class="container">
     <div class="footer-inner">
-      <div class="footer-brand">
-        <img src="icon.png" alt="">
-        Barista
-      </div>
+      <div class="footer-brand"><img src="icon.png" alt="">Barista</div>
       <div class="footer-links">
-        <a href="https://github.com/noamsmall18/barista">GitHub</a>
+        <a href="https://github.com/noamsmall18/barista">Source</a>
         <a href="https://github.com/noamsmall18/barista/releases">Releases</a>
         <a href="https://github.com/noamsmall18/barista/blob/main/LICENSE">MIT License</a>
-        <a href="https://github.com/noamsmall18">@noamsmall18</a>
       </div>
     </div>
   </div>
 </footer>
 
 <script>
-const reveals=document.querySelectorAll('.reveal');
-const obs=new IntersectionObserver((entries)=>{
-  entries.forEach((e,i)=>{
-    if(e.isIntersecting){
-      setTimeout(()=>e.target.classList.add('visible'),i*50);
-      obs.unobserve(e.target);
-    }
-  });
-},{threshold:.12});
-reveals.forEach(el=>obs.observe(el));
+/* Reveal */
+const revealEls=document.querySelectorAll('[data-r],[data-r-stagger],[data-r-scale]');
+const ro=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('v');ro.unobserve(e.target)}})},{threshold:.05,rootMargin:'0px 0px 50px 0px'});
+revealEls.forEach(el=>{const r=el.getBoundingClientRect();if(r.top<window.innerHeight&&r.bottom>0)el.classList.add('v');else ro.observe(el)});
 
-document.querySelectorAll('a[href^="#"]').forEach(a=>{
-  a.addEventListener('click',e=>{
-    e.preventDefault();
-    document.querySelector(a.getAttribute('href'))?.scrollIntoView({behavior:'smooth',block:'start'});
-  });
+/* Card mouse */
+document.querySelectorAll('.bento-card,.feat-card,.card,.card-glow').forEach(c=>{
+  c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();c.style.setProperty('--mouse-x',(e.clientX-r.left)+'px');c.style.setProperty('--mouse-y',(e.clientY-r.top)+'px')})
 });
+
+/* Counters */
+const co=new IntersectionObserver(es=>{es.forEach(e=>{if(!e.isIntersecting)return;const el=e.target,to=+el.dataset.to,dur=1400;let start=null;function step(ts){if(!start)start=ts;const p=Math.min((ts-start)/dur,1);const ease=1-Math.pow(1-p,4);el.textContent=Math.round(ease*to);if(p<1)requestAnimationFrame(step)}requestAnimationFrame(step);co.unobserve(el)})},{threshold:.5});
+document.querySelectorAll('.counter').forEach(el=>co.observe(el));
+
+/* Cycling */
+function cyc(id,ms){const c=document.getElementById(id);if(!c)return;const items=c.querySelectorAll('.mb-cyc-i');let i=0;setInterval(()=>{items[i].classList.remove('on');i=(i+1)%items.length;items[i].classList.add('on')},ms)}
+cyc('cryptoCyc',3000);
+cyc('sportsCyc',4000);
+
+/* Pomodoro */
+!function(){let s=18*60+42;const b=document.getElementById('pomTimer');setInterval(()=>{s=s>0?s-1:25*60;const m=Math.floor(s/60),sec=s%60;b.textContent=m+':'+String(sec).padStart(2,'0')},1000)}();
+
+/* CPU sparkline */
+!function(){const sp=document.getElementById('cpuSpark'),pct=document.getElementById('cpuPct');if(!sp)return;const bars=sp.querySelectorAll('.mb-spark-bar');setInterval(()=>{const vs=[];bars.forEach(b=>{const h=15+Math.random()*65;b.style.height=h+'%';vs.push(h)});pct.textContent=Math.round(vs.reduce((a,b)=>a+b,0)/vs.length)+'%'},2000)}();
+
+/* Clock */
+!function(){const el=document.getElementById('liveClock');if(!el)return;function u(){const d=new Date(),days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];let h=d.getHours(),ap=h>=12?'PM':'AM';h=h%12||12;el.textContent=days[d.getDay()]+' '+h+':'+String(d.getMinutes()).padStart(2,'0')+' '+ap}u();setInterval(u,10000)}();
 </script>
 </body>
 </html>

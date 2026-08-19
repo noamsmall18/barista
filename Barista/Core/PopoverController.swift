@@ -6,6 +6,10 @@ import Cocoa
 class PopoverController {
     private var popover: NSPopover?
     private var clickMonitor: Any?
+    private var localClickMonitor: Any?
+    private var keyMonitor: Any?
+    private var deactivateObserver: Any?
+    private var workspaceObserver: Any?
 
     func show(content: NSView, size: NSSize, relativeTo button: NSStatusBarButton) {
         dismiss()
@@ -64,8 +68,47 @@ class PopoverController {
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         self.popover = popover
 
-        // Click outside to dismiss
+        // Ensure popover appears above all windows (including full-screen settings)
+        if let popoverWindow = popover.contentViewController?.view.window {
+            popoverWindow.level = .popUpMenu
+        }
+
+        // Click outside app to dismiss
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.dismiss()
+        }
+
+        // Click inside app (but outside popover) to dismiss
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            if let popover = self?.popover, popover.isShown,
+               let contentView = popover.contentViewController?.view.window?.contentView,
+               !contentView.isMousePoint(contentView.convert(event.locationInWindow, from: nil), in: contentView.bounds) {
+                self?.dismiss()
+            }
+            return event
+        }
+
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.keyCode == 53 {
+                self?.dismiss()
+                return nil
+            }
+            return event
+        }
+
+        deactivateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            self?.dismiss()
+        }
+
+        workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
             self?.dismiss()
         }
     }
@@ -76,6 +119,22 @@ class PopoverController {
         if let monitor = clickMonitor {
             NSEvent.removeMonitor(monitor)
             clickMonitor = nil
+        }
+        if let monitor = localClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            localClickMonitor = nil
+        }
+        if let monitor = keyMonitor {
+            NSEvent.removeMonitor(monitor)
+            keyMonitor = nil
+        }
+        if let observer = deactivateObserver {
+            NotificationCenter.default.removeObserver(observer)
+            deactivateObserver = nil
+        }
+        if let observer = workspaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+            workspaceObserver = nil
         }
     }
 
