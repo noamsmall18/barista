@@ -113,6 +113,12 @@ class PopoverController {
         }
     }
 
+    /// Called after the popover closes, however it closed - clicking outside,
+    /// Escape, the app deactivating, or toggling the status item. Everything
+    /// funnels through dismiss(), so this is the one place a caller needs to
+    /// observe to know the popover is gone.
+    var onDismiss: (() -> Void)?
+
     func dismiss() {
         popover?.performClose(nil)
         popover = nil
@@ -136,6 +142,7 @@ class PopoverController {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
             workspaceObserver = nil
         }
+        onDismiss?()
     }
 
     var isShown: Bool { popover?.isShown ?? false }

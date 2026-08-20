@@ -96,6 +96,13 @@ class WidgetInstance {
         if widget.hasInteractiveDropdown {
             if popoverController == nil {
                 popoverController = PopoverController()
+                // Anything that happened while the dropdown was open - an edit,
+                // a price refresh - is drawn the moment it closes, instead of
+                // waiting for the next poll.
+                popoverController?.onDismiss = { [weak self] in
+                    guard let self, self.pendingRedraw.take() else { return }
+                    self.updateStatusItem()
+                }
             }
             if popoverController?.isShown == true {
                 popoverController?.dismiss()
@@ -139,15 +146,22 @@ class WidgetInstance {
         scrollView = nil
     }
 
+    private var pendingRedraw = DeferredRedraw()
+
     func updateStatusItem() {
         guard let item = statusItem else { return }
 
         // While the popover is open it is anchored to this status-item button.
         // Mutating the button (length/title/subviews) here dismisses a transient
         // NSPopover, so a periodic data refresh would make the popover vanish.
-        // Skip the menu-bar redraw until the popover closes; the next refresh
-        // tick catches the button up.
-        if popoverController?.isShown == true { return }
+        // The redraw is therefore deferred rather than dropped: onDismiss
+        // performs it the instant the popover closes. Dropping it meant an edit
+        // made in the dropdown waited for the next poll, which is five minutes
+        // when the market is closed.
+        if popoverController?.isShown == true {
+            pendingRedraw.request()
+            return
+        }
 
         let mode = widget.render()
 
