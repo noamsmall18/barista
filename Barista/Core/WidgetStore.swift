@@ -54,7 +54,7 @@ class WidgetStore {
     }
 
     func defaultWidgets() -> [SavedWidget] {
-        let defaults = ["stock-ticker", "system-health", "today-brief", "weather-current"]
+        let defaults = AppFlavor.current.defaultWidgetIDs
             .filter { WidgetRegistry.shared.entry(for: $0) != nil }
         return defaults.enumerated().map { index, widgetID in
             SavedWidget(

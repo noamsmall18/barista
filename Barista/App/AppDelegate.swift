@@ -24,7 +24,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var sparkleUpdater: AnyObject?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Register all widget types
+        // Marketbar has its own preferences domain, so on its first run it
+        // carries the user's portfolios and history over from Barista. Reads
+        // only; Barista's copy is left exactly as it was.
+        FlavorMigration.importFromBaristaIfNeeded()
+
+        // Register the widget types this flavour ships
         WidgetRegistry.shared.registerAll()
 
         // Load and activate saved widgets

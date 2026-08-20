@@ -47,7 +47,15 @@ class WidgetRegistry {
         entries.filter { $0.category == category }
     }
 
-    func registerAll() {
+    /// Registers the widgets this flavour ships.
+    ///
+    /// Marketbar registers only the market terminal, so nothing else can appear
+    /// in its gallery, its settings, or a restored layout.
+    func registerAll(for flavor: AppFlavor = .current) {
+        guard flavor == .barista else {
+            register(StockTickerWidget.self)
+            return
+        }
         // Finance
         register(StockTickerWidget.self)
         // System

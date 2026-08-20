@@ -1,16 +1,35 @@
-# Barista
+# Marketbar & Barista
 
-A menu bar widget platform for macOS. 52 widgets across 12 categories, plus a
-market terminal with portfolio tracking, a trade ledger and company research -
-in a single native AppKit app with **zero third-party dependencies**.
+**Marketbar** is a market terminal that lives in your menu bar: multiple
+portfolios, a trade ledger, company research, and extended-hours moves kept
+honestly separate from the trading day.
+
+**Barista** is the widget platform it grew out of - 52 widgets across 12
+categories, including Marketbar's terminal as one of them.
+
+Both ship from this repo and share a codebase. Native AppKit, **zero
+third-party dependencies**.
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
+![Tests](https://img.shields.io/badge/tests-37-brightgreen)
+
+## Which one do you want?
+
+**Most people want Marketbar.** It is the market terminal on its own, with no
+other widgets in the way.
+
+Take Barista if you want the whole widget platform - CPU, weather, pomodoro,
+calendar, scripts and the rest - with the terminal included.
+
+They install side by side and keep separate settings. If you already use
+Barista, Marketbar imports your portfolios, cost basis, ledger and history the
+first time it launches, and leaves Barista's copy untouched.
 
 ## Install
 
-Barista is not distributed through the App Store and is not notarized, because
+Neither app is distributed through the App Store or notarized, because
 notarization requires a paid Apple Developer account. **Building from source
 avoids the problem entirely** - macOS only quarantines files you *download*, so
 an app you build yourself launches normally.
@@ -18,12 +37,17 @@ an app you build yourself launches normally.
 ```bash
 git clone https://github.com/noamsmall18/barista.git
 cd barista
-./build-app.sh --install
+./build-app.sh marketbar --install     # just the market terminal
 ```
 
-That builds a release binary, assembles `Barista.app`, signs it ad-hoc, installs
-it to `/Applications` and launches it. Takes about a minute. Drop `--install` to
-build into `./dist` and move it yourself.
+That builds, assembles `Marketbar.app`, signs it ad-hoc, installs it to
+`/Applications` and launches it. Takes about a minute.
+
+```bash
+./build-app.sh barista --install       # the full widget platform
+./build-app.sh --install               # both, side by side
+./build-app.sh                         # build only, into ./dist
+```
 
 Requirements: macOS 13+ and Apple's Command Line Tools (`xcode-select --install`).
 Full Xcode is not needed.
@@ -44,7 +68,7 @@ right-click -> Open trick no longer works.
 **From the terminal** - remove the quarantine flag directly:
 
 ```bash
-xattr -d com.apple.quarantine /Applications/Barista.app
+xattr -d com.apple.quarantine /Applications/Marketbar.app
 ```
 
 Only run that on software you actually trust. It is the same check that stops
@@ -55,7 +79,7 @@ security trade-off at all.
 
 ## Features
 
-**52 Built-in Widgets** across 12 categories:
+### Barista: 52 widgets across 12 categories
 
 | Category | Widgets |
 |----------|---------|
@@ -72,7 +96,9 @@ security trade-off at all.
 | Health | Water Reminder, Stand Reminder |
 | Utility | Keep Awake, Dark Mode Toggle, Script Widget (xbar-compatible) |
 
-**Market Terminal** - The stock ticker is a full position tracker. Multiple
+### Marketbar: the market terminal
+
+A full position tracker. Multiple
 portfolios with cash, cost basis and allocation breakdowns. A trade ledger where
 buys and sells are the source of truth, so share counts, average cost and
 realised profit are all derived by replaying it and can never drift apart. A
@@ -98,12 +124,25 @@ pre-market, regular and post-market bars rather than drawing them as one line.
 ## Building
 
 ```bash
-swift build -c release        # binary only, at .build/release/Barista
-./build-app.sh                # assembles dist/Barista.app
-./build-app.sh --install      # ...and installs it to /Applications
+swift build -c release          # binary only
+./build-app.sh                  # assembles both apps into ./dist
+./build-app.sh marketbar        # just Marketbar
+./build-app.sh barista --install
 ```
 
-Barista has no package dependencies, so there is nothing to resolve or vendor.
+No package dependencies, so there is nothing to resolve or vendor.
+
+### How one binary becomes two apps
+
+Marketbar and Barista are the same executable in different bundles. The bundle's
+`BAAppFlavor` key decides which widgets `WidgetRegistry` registers: Marketbar
+registers only the market terminal, so nothing else can reach its gallery, its
+settings, or a restored layout.
+
+The alternative - two SwiftPM targets - would mean moving thirty thousand lines
+into a shared library and marking every cross-boundary type `public`. The cost of
+doing it this way instead is that Marketbar's binary still contains the other
+widgets' code; it is simply unreachable.
 
 ## Tests
 
@@ -111,8 +150,8 @@ Barista has no package dependencies, so there is nothing to resolve or vendor.
 swift test
 ```
 
-32 tests covering the trade ledger, portfolio migration, trading-session
-segmentation and DataFetcher's threading contract. They run against a saved real
+37 tests covering the trade ledger, portfolio migration, trading-session
+segmentation, DataFetcher's threading contract and the flavour split. They run against a saved real
 Yahoo chart response and never touch the network.
 
 ## Architecture
