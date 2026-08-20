@@ -14,6 +14,12 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("CoreWLAN")
             ]
+        ),
+        .testTarget(
+            name: "BaristaTests",
+            dependencies: ["Barista"],
+            path: "Tests/BaristaTests",
+            resources: [.copy("Fixtures")]
         )
     ]
 )

@@ -105,6 +105,16 @@ swift build -c release        # binary only, at .build/release/Barista
 
 Barista has no package dependencies, so there is nothing to resolve or vendor.
 
+## Tests
+
+```bash
+swift test
+```
+
+32 tests covering the trade ledger, portfolio migration, trading-session
+segmentation and DataFetcher's threading contract. They run against a saved real
+Yahoo chart response and never touch the network.
+
 ## Architecture
 
 ```
