@@ -10,6 +10,8 @@ struct MarketQuote: Codable, Equatable {
     let change: Double
     let kind: Kind
     var previousClose: Double? = nil
+    var currency: String? = nil
+    var receivedAt: Double? = nil
     var dayHigh: Double?
     var dayLow: Double?
     var volume: Double?
@@ -30,7 +32,7 @@ struct MarketQuote: Codable, Equatable {
     var minuteTimes: [Double] = []
 
     enum CodingKeys: String, CodingKey {
-        case symbol, price, change, kind, previousClose, dayHigh, dayLow, volume
+        case symbol, price, change, kind, previousClose, currency, receivedAt, dayHigh, dayLow, volume
         case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
@@ -726,6 +728,23 @@ class StockTickerWidget: BaristaWidget {
     fileprivate var popoverVC: MarketPopoverController?
     private var previousPrices: [String: Double] = [:]
 
+    private var researchServer: PortfolioWebServer?
+    private var dashboardLeaseUntil = Date.distantPast
+
+    func openResearchDashboard() {
+        if researchServer == nil { researchServer = PortfolioWebServer(widget: self) }
+        researchServer?.open()
+    }
+
+    func dashboardHeartbeat() {
+        let wasActive = dashboardLeaseUntil > Date()
+        dashboardLeaseUntil = Date().addingTimeInterval(15)
+        if !wasActive {
+            rescheduleRefreshTimerIfNeeded()
+            tick()
+        }
+    }
+
     var onDataRefresh: (() -> Void)?
 
     private static let indexSymbols = ["SPY", "QQQ", "DIA"]
@@ -734,7 +753,7 @@ class StockTickerWidget: BaristaWidget {
 
     /// The configured rate, before market hours or backoff are taken into account.
     private var baseRefreshInterval: TimeInterval {
-        max(2, min(config.refreshInterval, Self.turboRefreshInterval))
+        dashboardLeaseUntil > Date() ? 2 : max(2, min(config.refreshInterval, Self.turboRefreshInterval))
     }
 
     /// How often equities are worth re-fetching. Prices only move while the
@@ -801,9 +820,12 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private func noteFetchSuccess() {
-        consecutiveRateLimits = 0
-        backoffUntil = nil
-        rateLimitedHost = nil
+        // A successful sibling request must not cancel an active 429 cooldown.
+        if !isBackingOff {
+            consecutiveRateLimits = 0
+            backoffUntil = nil
+            rateLimitedHost = nil
+        }
         lastSuccessfulFetch = Date()
         recordPortfolioHistory()
     }
@@ -871,12 +893,24 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func stop() {
+        researchServer = nil
+        dashboardLeaseUntil = .distantPast
         timer?.invalidate()
         timer = nil
     }
 
     private func tick() {
-        // Self-correcting timer: if refresh rate changed, rebuild the timer
+        rescheduleRefreshTimerIfNeeded()
+        fetchAll()
+        // The service self-throttles to a 6 hour cadence; without this the
+        // calendar was only ever loaded once, at launch.
+        EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
+            self?.onDataRefresh?()
+        }
+        checkEarningsAlerts()
+    }
+
+    private func rescheduleRefreshTimerIfNeeded() {
         let interval = effectiveRefreshInterval
         if currentTimerInterval != interval {
             timer?.invalidate()
@@ -886,13 +920,6 @@ class StockTickerWidget: BaristaWidget {
                 self?.tick()
             }
         }
-        fetchAll()
-        // The service self-throttles to a 6 hour cadence; without this the
-        // calendar was only ever loaded once, at launch.
-        EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
-            self?.onDataRefresh?()
-        }
-        checkEarningsAlerts()
     }
 
     func saveConfig() {
@@ -1236,17 +1263,10 @@ class StockTickerWidget: BaristaWidget {
     private func fetchStock(symbol: String, force: Bool = false) {
         let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
-        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                // DataFetcher calls back on the URLSession queue. Widget state and
-                // anything that reads `quotes` must stay on the main thread, or the
-                // array is mutated on one thread while another walks it.
-                DispatchQueue.main.async {
-                    self.lastFetchFailed = false
-                    self.noteFetchSuccess()
-                }
                 self.parseStock(data: data, symbol: symbol, isIndex: false)
             case .failure(let error):
                 DispatchQueue.main.async {
@@ -1265,11 +1285,10 @@ class StockTickerWidget: BaristaWidget {
     private func fetchIndex(symbol: String, force: Bool = false) {
         let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
-        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge) { [weak self] result in
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                DispatchQueue.main.async { self.noteFetchSuccess() }
                 self.parseStock(data: data, symbol: symbol, isIndex: true)
             case .failure(let error):
                 DispatchQueue.main.async { self.noteFetchFailure(error) }
@@ -1440,6 +1459,8 @@ class StockTickerWidget: BaristaWidget {
                                 preMarketPrice: prePrice, preMarketChange: preChgPct,
                                 postMarketPrice: postPrice, postMarketChange: postChgPct,
                                 marketState: marketState)
+            q.currency = meta["currency"] as? String
+            q.receivedAt = Date().timeIntervalSince1970
             q.regularStart = Double(regularStart)
             q.regularEnd = Double(regularEnd)
             q.sparklineTimes = sparkTimes.count == sparkline.count ? sparkTimes : []
@@ -1467,6 +1488,7 @@ class StockTickerWidget: BaristaWidget {
                 }
                 self.previousPrices[symbol] = q.currentPrice
                 self.lastUpdated = Date()
+                self.noteFetchSuccess()
                 self.saveQuoteCache()
                 self.onDisplayUpdate?()
                 self.onDataRefresh?()
@@ -1483,14 +1505,10 @@ class StockTickerWidget: BaristaWidget {
     private func fetchCrypto(force: Bool = false) {
         let ids = config.coins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let url = URL(string: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=\(config.cryptoCurrency)&ids=\(ids)&sparkline=true&price_change_percentage=24h") else { return }
-        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : cryptoCacheAge) { [weak self] result in
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : cryptoCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
             switch result {
             case .success(let data):
-                DispatchQueue.main.async {
-                    self.lastFetchFailed = false
-                    self.noteFetchSuccess()
-                }
                 self.parseCrypto(data: data)
             case .failure(let error):
                 DispatchQueue.main.async {
@@ -1523,6 +1541,8 @@ class StockTickerWidget: BaristaWidget {
                     dayHigh: cd["high_24h"] as? Double, dayLow: cd["low_24h"] as? Double,
                     volume: cd["total_volume"] as? Double, sparkline: sparkline,
                     marketCap: cd["market_cap"] as? Double))
+                results[results.count - 1].currency = self.config.cryptoCurrency.uppercased()
+                results[results.count - 1].receivedAt = Date().timeIntervalSince1970
             }
             DispatchQueue.main.async {
                 for q in results { self.checkPriceAlert(symbol: q.symbol, newPrice: q.price) }
@@ -1532,6 +1552,7 @@ class StockTickerWidget: BaristaWidget {
                 self.quotes.append(contentsOf: results)
                 for q in results { self.previousPrices[q.symbol] = q.price }
                 self.lastUpdated = Date()
+                self.noteFetchSuccess()
                 self.saveQuoteCache()
                 self.onDisplayUpdate?()
                 self.onDataRefresh?()

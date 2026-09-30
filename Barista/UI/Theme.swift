@@ -22,9 +22,9 @@ struct Theme {
     // Text
     static let textPrimary = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.96)
     static let textSecondary = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.86)
-    static let textMuted = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.54)
-    static let textFaint = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.36)
-    static let textGhost = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.22)
+    static let textMuted = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.70)
+    static let textFaint = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.58)
+    static let textGhost = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.46)
 
     // Accent - amber from logo
     static let accent = brandAmber

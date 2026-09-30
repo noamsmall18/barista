@@ -5,6 +5,7 @@ class DataFetcher {
 
     private let session: URLSession
     private var cache: [String: CachedResponse] = [:]
+    private var pending: [String: [(Result<Data, Error>) -> Void]] = [:]
     private let cacheQueue = DispatchQueue(label: "barista.datafetcher.cache")
 
     struct CachedResponse {
@@ -33,6 +34,7 @@ class DataFetcher {
         var headers: [String: String] = [:]
         var body: Data? = nil
         var maxAge: TimeInterval = 60
+        var allowStaleCache: Bool = true
     }
 
     private init() {
@@ -45,8 +47,8 @@ class DataFetcher {
     }
 
     /// Simple GET fetch with caching (existing API).
-    func fetch(url: URL, maxAge: TimeInterval = 60, completion: @escaping (Result<Data, Error>) -> Void) {
-        fetch(FetchRequest(url: url, maxAge: maxAge), completion: completion)
+    func fetch(url: URL, maxAge: TimeInterval = 60, allowStaleCache: Bool = true, completion: @escaping (Result<Data, Error>) -> Void) {
+        fetch(FetchRequest(url: url, maxAge: maxAge, allowStaleCache: allowStaleCache), completion: completion)
     }
 
     /// Delivers every completion on the main queue.
@@ -71,6 +73,8 @@ class DataFetcher {
         }
 
         let key = "\(request.method):\(request.url.absoluteString)"
+            + ":" + request.headers.sorted { $0.key < $1.key }.description
+            + ":" + (request.body?.base64EncodedString() ?? "")
 
         // Check cache
         var cached: CachedResponse?
@@ -81,6 +85,21 @@ class DataFetcher {
             return
         }
 
+        // Coalesce overlapping polls so a slow response cannot multiply network
+        // traffic when a dashboard requests a faster cadence.
+        let requestKey = key + ":" + String(request.allowStaleCache)
+            + (request.method.uppercased() == "GET" ? "" : ":" + UUID().uuidString)
+        let shouldStart = cacheQueue.sync { () -> Bool in
+            if pending[requestKey] != nil { pending[requestKey]?.append(completion); return false }
+            pending[requestKey] = [completion]
+            return true
+        }
+        guard shouldStart else { return }
+        let finish: (Result<Data, Error>) -> Void = { [weak self] result in
+            guard let self else { return }
+            let callbacks = self.cacheQueue.sync { self.pending.removeValue(forKey: requestKey) ?? [] }
+            callbacks.forEach { Self.deliver(result, to: $0) }
+        }
         var urlReq = URLRequest(url: request.url)
         urlReq.httpMethod = request.method
         urlReq.httpBody = request.body
@@ -90,10 +109,10 @@ class DataFetcher {
 
         session.dataTask(with: urlReq) { [weak self] data, response, error in
             if let error = error {
-                if let cached = cached {
-                    DataFetcher.deliver(.success(cached.data), to: completion)
+                if request.allowStaleCache, let cached = cached {
+                    finish(.success(cached.data))
                 } else {
-                    DataFetcher.deliver(.failure(error), to: completion)
+                    finish(.failure(error))
                 }
                 return
             }
@@ -103,20 +122,20 @@ class DataFetcher {
             // response and cached, which quietly served garbage to the parsers
             // for the whole cache window.
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                DataFetcher.deliver(.failure(HTTPError(statusCode: http.statusCode,
-                                                 host: request.url.host ?? request.url.absoluteString)), to: completion)
+                finish(.failure(HTTPError(statusCode: http.statusCode,
+                                                 host: request.url.host ?? request.url.absoluteString)))
                 return
             }
 
             guard let data = data else {
-                DataFetcher.deliver(.failure(URLError(.badServerResponse)), to: completion)
+                finish(.failure(URLError(.badServerResponse)))
                 return
             }
 
             self?.cacheQueue.sync {
                 self?.cache[key] = CachedResponse(data: data, timestamp: Date())
             }
-            DataFetcher.deliver(.success(data), to: completion)
+            finish(.success(data))
         }.resume()
     }
 

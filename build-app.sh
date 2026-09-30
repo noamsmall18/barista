@@ -46,6 +46,7 @@ bundle() {
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$BIN" "$app/Contents/MacOS/$exe"
     cp "$plist" "$app/Contents/Info.plist"
+    cp -R "$ROOT/Barista/Web" "$app/Contents/Resources/Web"
     [ -f "$ROOT/AppIcon.icns" ] && cp "$ROOT/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
     codesign --force --deep --sign - \
         --entitlements "$ROOT/Barista/Barista.entitlements" "$app" 2>/dev/null \

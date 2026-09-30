@@ -78,11 +78,11 @@ final class StockFundamentalsService {
 
     private init() {}
 
-    func fetch(symbol: String, completion: @escaping (Result<StockFundamentals, Error>) -> Void) {
+    func fetch(symbol: String, maxAge: TimeInterval = 12 * 60 * 60, completion: @escaping (Result<StockFundamentals, Error>) -> Void) {
         let upper = symbol.uppercased()
         let cached: StockFundamentals? = cacheQueue.sync {
             if let cached = fundamentalsCache[upper],
-               Date().timeIntervalSince(cached.fetchedAt) < 12 * 60 * 60 {
+               Date().timeIntervalSince(cached.fetchedAt) < maxAge {
                 return cached
             }
             return nil
@@ -98,7 +98,7 @@ final class StockFundamentalsService {
                 DispatchQueue.main.async { completion(.failure(URLError(.cannotFindHost))) }
                 return
             }
-            self.fetchCompanyFacts(symbol: upper, company: company, completion: completion)
+            self.fetchCompanyFacts(symbol: upper, company: company, maxAge: maxAge, completion: completion)
         }
     }
 
@@ -161,12 +161,12 @@ final class StockFundamentalsService {
         }
     }
 
-    private func fetchCompanyFacts(symbol: String, company: SECCompany, completion: @escaping (Result<StockFundamentals, Error>) -> Void) {
+    private func fetchCompanyFacts(symbol: String, company: SECCompany, maxAge: TimeInterval, completion: @escaping (Result<StockFundamentals, Error>) -> Void) {
         guard let url = URL(string: "https://data.sec.gov/api/xbrl/companyfacts/CIK\(company.paddedCIK).json") else {
             DispatchQueue.main.async { completion(.failure(URLError(.badURL))) }
             return
         }
-        let request = DataFetcher.FetchRequest(url: url, headers: secHeaders, maxAge: 12 * 60 * 60)
+        let request = DataFetcher.FetchRequest(url: url, headers: secHeaders, maxAge: maxAge, allowStaleCache: false)
         DataFetcher.shared.fetch(request) { [weak self] result in
             guard let self else { return }
             switch result {

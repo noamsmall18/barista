@@ -53,6 +53,15 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         let cw = popoverW - pad * 2
         var y: CGFloat = 14
 
+        let dashboard = NSButton(title: "Open Research Workspace ↗", target: self, action: #selector(openDashboard))
+        dashboard.bezelStyle = .rounded
+        dashboard.font = .systemFont(ofSize: 12, weight: .medium)
+        dashboard.contentTintColor = NSColor(calibratedRed: 0.88, green: 0.76, blue: 0.57, alpha: 1)
+        dashboard.frame = NSRect(x: pad, y: y, width: cw, height: 36)
+        dashboard.setAccessibilityLabel("Open portfolio research webpage")
+        docView.addSubview(dashboard)
+        y += 46
+
         let sorted = w.sortedQuotes()
         let stocks = sorted.filter { $0.kind == .stock }
         let crypto = sorted.filter { $0.kind == .crypto }
@@ -131,6 +140,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
             self.scrollView.reflectScrolledClipView(self.scrollView.contentView)
         }
     }
+
+    @objc private func openDashboard() { widget?.openResearchDashboard() }
 
     // MARK: - Portfolio Panel
 
