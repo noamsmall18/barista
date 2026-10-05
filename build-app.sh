@@ -35,7 +35,7 @@ command -v swift >/dev/null 2>&1 || {
 }
 
 echo "==> Building (about a minute the first time)"
-swift build -c release --package-path "$ROOT"
+swift build -c release --package-path "$ROOT" ${BARISTA_SWIFT_BUILD_FLAGS:-}
 
 # bundle <AppName> <Info.plist> <executable name>
 bundle() {
@@ -47,6 +47,18 @@ bundle() {
     cp "$BIN" "$app/Contents/MacOS/$exe"
     cp "$plist" "$app/Contents/Info.plist"
     cp -R "$ROOT/Barista/Web" "$app/Contents/Resources/Web"
+    # Separate executable process, sharing only the flavor's preferences and
+    # shipped Swift services. It bypasses NSApplication and AppDelegate entirely.
+    helper="$app/Contents/Resources/Research.app"
+    "$ROOT/scripts/bundle-research.sh" "$BIN" "$helper" "$name" "$plist" "$ROOT/Barista"
+    # Double-click this launcher to open research with the menu-bar app closed.
+    launcher="$ROOT/dist/Open $name Research.command"
+    cat > "$launcher" <<LAUNCHER
+#!/bin/sh
+RESEARCH_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
+nohup "\$RESEARCH_ROOT/$name.app/Contents/Resources/Research.app/Contents/MacOS/${name}Research" >/dev/null 2>&1 </dev/null &
+LAUNCHER
+    chmod +x "$launcher"
     [ -f "$ROOT/AppIcon.icns" ] && cp "$ROOT/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
     codesign --force --deep --sign - \
         --entitlements "$ROOT/Barista/Barista.entitlements" "$app" 2>/dev/null \

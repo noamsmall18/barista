@@ -1,48 +1,57 @@
 import Cocoa
 import Network
 
-/// A private, read-only browser companion. Each running flavor gets its own
-/// random loopback port and capability URL, tied to its live widget instance.
+/// A private browser companion. Portfolio data is read-only; research notes
+/// and view preferences have their own storage. Each running flavor gets its own
+/// loopback port and capability URL, hosted by the independent research helper.
 final class PortfolioWebServer {
     private weak var widget: StockTickerWidget?
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
-    private let token = UUID().uuidString + UUID().uuidString
-    private var openWhenReady = false
-    private var isReady = false
+    private let token: String
+    private let preferredPort: UInt16?
+    private var ready: ((URL) -> Void)?
+    private var failed: ((Error) -> Void)?
     private var origin: String? { listener?.port.map { "http://127.0.0.1:\($0.rawValue)" } }
     private var researchCache: [String: (Date, Data)] = [:]
     private var researchPending: [String: [(Data) -> Void]] = [:]
     private var newsCache: [String: (Date, Data)] = [:]
     private var newsPending: [String: [(Data) -> Void]] = [:]
 
-    init(widget: StockTickerWidget) { self.widget = widget }
+    init(widget: StockTickerWidget, token: String = UUID().uuidString + UUID().uuidString,
+         preferredPort: UInt16? = nil) {
+        self.widget = widget
+        self.token = token
+        self.preferredPort = preferredPort
+    }
 
-    func open() {
-        if isReady, let origin { NSWorkspace.shared.open(URL(string: "\(origin)/\(token)/")!); return }
-        openWhenReady = true
-        guard listener == nil else { return }
+    func start(onReady: @escaping (URL) -> Void, onFailure: @escaping (Error) -> Void) {
+        ready = onReady
+        failed = onFailure
+        listen(port: preferredPort)
+    }
+
+    private func listen(port: UInt16?) {
         do {
             let parameters = NWParameters.tcp
-            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+            parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback),
+                port: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any)
             let listener = try NWListener(using: parameters)
             self.listener = listener
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
                 case .ready:
-                    self.isReady = true
-                    if self.openWhenReady, let origin = self.origin {
-                        self.openWhenReady = false
-                        NSWorkspace.shared.open(URL(string: "\(origin)/\(self.token)/")!)
+                    if let origin = self.origin, let url = URL(string: "\(origin)/\(self.token)/") {
+                        self.ready?(url)
                     }
                 case .failed(let error):
-                    self.isReady = false
-                    self.listener?.cancel(); self.listener = nil
-                    let alert = NSAlert()
-                    alert.messageText = "Couldn't open portfolio research"
-                    alert.informativeText = error.localizedDescription
-                    alert.runModal()
+                    listener.stateUpdateHandler = nil
+                    listener.cancel()
+                    self.listener = nil
+                    // A previous port may have been claimed since the helper stopped.
+                    if port != nil { self.listen(port: nil) }
+                    else { self.failed?(error) }
                 default: break
                 }
             }
@@ -60,10 +69,8 @@ final class PortfolioWebServer {
             }
             listener.start(queue: .main)
         } catch {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't start portfolio research"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+            if port != nil { listen(port: nil) }
+            else { failed?(error) }
         }
     }
 
@@ -72,47 +79,49 @@ final class PortfolioWebServer {
             guard let self else { connection.cancel(); return }
             var data = data
             if let chunk { data.append(chunk) }
-            guard data.count <= 16_384 else { self.respond(connection, status: 413); return }
+            guard data.count <= 262_144 else { self.respond(connection, status: 413); return }
             if data.range(of: Data("\r\n\r\n".utf8)) != nil {
-                self.route(connection, request: data)
-            } else if complete || error != nil { connection.cancel() }
+                guard let length = Self.requestLength(data) else { self.respond(connection, status: 400); return }
+                if data.count >= length { self.route(connection, request: data) }
+                else if complete || error != nil { connection.cancel() }
+                else { self.receive(connection, data: data) }
+            } else if data.count > 16_384 { self.respond(connection, status: 413) }
+            else if complete || error != nil { connection.cancel() }
             else { self.receive(connection, data: data) }
         }
     }
 
-    /// Strict same-origin request gate prevents websites from reading holdings
-    /// through cross-origin requests or DNS rebinding to this loopback listener.
+    static func requestLength(_ data: Data) -> Int? {
+        ResearchWorkspaceRequest.requestLength(data)
+    }
+
     static func authorizedPath(request: Data, origin: String, token: String) -> URLComponents? {
-        guard let text = String(data: request, encoding: .utf8) else { return nil }
-        let lines = text.components(separatedBy: "\r\n")
-        let first = (lines.first ?? "").split(separator: " ")
-        guard first.count == 3, first[0] == "GET", first[2] == "HTTP/1.1" else { return nil }
-        var headers: [String: String] = [:]
-        for line in lines.dropFirst() {
-            if line.isEmpty { break }
-            guard let colon = line.firstIndex(of: ":") else { return nil }
-            let key = line[..<colon].lowercased()
-            guard headers[key] == nil else { return nil }
-            headers[key] = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-        }
-        guard headers["host"] == String(origin.dropFirst("http://".count)),
-              headers["origin"] == nil || headers["origin"] == origin,
-              headers["transfer-encoding"] == nil,
-              headers["content-length"] == nil || headers["content-length"] == "0",
-              let parts = URLComponents(string: String(first[1])),
-              parts.scheme == nil, parts.host == nil,
-              parts.path.hasPrefix("/\(token)/") else { return nil }
-        return parts
+        ResearchWorkspaceRequest.authorizedPath(request: request, origin: origin, token: token)
     }
 
     private func route(_ connection: NWConnection, request: Data) {
         guard let origin, let parts = Self.authorizedPath(request: request, origin: origin, token: token),
               let widget else { respond(connection, status: 403); return }
         let path = String(parts.path.dropFirst(token.count + 2))
+        if path == "health" {
+            respond(connection, body: Self.json(["service": "research-workspace", "pid": ProcessInfo.processInfo.processIdentifier]), mime: "application/json")
+            return
+        }
+        if path == "workspace" {
+            if request.starts(with: Data("POST ".utf8)) {
+                guard let separator = request.range(of: Data("\r\n\r\n".utf8)),
+                      ResearchWorkspaceStore.save(Data(request[separator.upperBound...])) else {
+                    respond(connection, status: 400, body: Self.json(["error": "Invalid workspace update"]), mime: "application/json"); return
+                }
+                respond(connection, body: Self.json(["saved": true]), mime: "application/json")
+            } else { respond(connection, body: Self.json(ResearchWorkspaceStore.load()), mime: "application/json") }
+            return
+        }
         if path == "snapshot" {
             widget.dashboardHeartbeat()
             var payload = PortfolioWebSnapshot.make(config: widget.config, quotes: widget.sortedQuotes(), indices: widget.indexQuotes)
             payload["updatedAt"] = PortfolioWebSnapshot.number(widget.lastUpdated?.timeIntervalSince1970)
+            payload["standalone"] = true
             payload["servedAt"] = Date().timeIntervalSince1970
             payload["status"] = widget.freshnessDescription()
             payload["failedSymbols"] = Array(widget.failedSymbols).sorted()
@@ -127,13 +136,35 @@ final class PortfolioWebServer {
             respond(connection, body: Self.json(payload), mime: "application/json")
             return
         }
-        if ["research", "news", "chart", "expectations"].contains(path) {
+        if ["research", "news", "chart", "expectations", "study-quote"].contains(path) {
             guard let symbol = parts.queryItems?.first(where: { $0.name == "symbol" })?.value,
-                  let quote = widget.quotes.first(where: { $0.symbol == symbol }), quote.kind == .stock else {
+                  ResearchWorkspaceRequest.validResearchSymbol(symbol),
+                  widget.quotes.first(where: { $0.symbol == symbol })?.kind != .crypto else {
                 respond(connection, status: 404); return
             }
             let finish: (Data) -> Void = { [weak self] data in self?.respond(connection, body: data, mime: "application/json") }
             switch path {
+            case "study-quote":
+                StockPriceHistoryService.shared.fetch(symbol: symbol, range: .oneDay) { result in
+                    switch result {
+                    case .success(let history):
+                        guard history.instrumentType == "EQUITY" else {
+                            finish(Self.json(["error": "Independent company research requires an equity ticker. Provider instrument type: \(history.instrumentType ?? "unavailable")."])); return
+                        }
+                        let latest = history.latest
+                        let previous = history.previousClose
+                        let change = latest.flatMap { point in previous.flatMap { $0 > 0 ? (point.close / $0 - 1) * 100 : nil } }
+                        finish(Self.json(["symbol": symbol, "kind": "stock", "currency": history.currency,
+                                          "price": Self.number(latest?.close), "change": Self.number(change),
+                                          "previousClose": Self.number(previous), "quantity": 0,
+                                          "session": "Last observed bar", "researchOnly": true,
+                                          "company": history.companyName ?? symbol,
+                                          "receivedAt": history.fetchedAt.timeIntervalSince1970,
+                                          "observedAt": Self.number(latest?.date.timeIntervalSince1970),
+                                          "sparkline": history.points.suffix(90).map(\.close)]))
+                    case .failure(let error): finish(Self.json(["error": "Symbol unavailable: \(error.localizedDescription)"]))
+                    }
+                }
             case "research": fundamentals(symbol, completion: finish)
             case "news": news(symbol, completion: finish)
             case "expectations": AnalystExpectationsService.shared.fetch(symbol: symbol, completion: finish)
@@ -151,7 +182,7 @@ final class PortfolioWebServer {
             }
             return
         }
-        let files = ["": ("index.html", "text/html"), "app.js": ("app.js", "text/javascript"), "style.css": ("style.css", "text/css")]
+        let files = ["": ("index.html", "text/html"), "app.js": ("app.js", "text/javascript"), "analytics.js": ("analytics.js", "text/javascript"), "desk-model.js": ("desk-model.js", "text/javascript"), "desk.js": ("desk.js", "text/javascript"), "style.css": ("style.css", "text/css")]
         guard let (file, mime) = files[path], let data = Self.asset(file) else { respond(connection, status: 404); return }
         respond(connection, body: data, mime: mime)
     }
@@ -159,6 +190,8 @@ final class PortfolioWebServer {
     static func json(_ object: Any) -> Data {
         (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data("{\"error\":\"Unable to encode data\"}".utf8)
     }
+
+    private static func number(_ value: Double?) -> Any { PortfolioWebSnapshot.number(value) }
 
     static func asset(_ name: String) -> Data? {
         let resource = Bundle.main.resourceURL?.appendingPathComponent("Web").appendingPathComponent(name)

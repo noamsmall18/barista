@@ -42,4 +42,46 @@ final class PortfolioWebTests: XCTestCase {
         XCTAssertTrue(StatusDropdownPanel.spaceBehavior.contains(.fullScreenAuxiliary))
         XCTAssertTrue(StatusDropdownPanel.spaceBehavior.contains(.canJoinAllApplications))
     }
+
+    func testNotebookWritesRequireExactRouteSameOriginAndJSON() {
+        let body = Data("{\"symbol\":\"AAPL\",\"note\":{\"thesis\":\"Evidence\",\"risks\":\"\",\"catalysts\":\"\"}}".utf8)
+        func post(path: String = "/secret/workspace", origin: String? = "http://127.0.0.1:54321", type: String = "application/json") -> Data {
+            var header = "POST \(path) HTTP/1.1\r\nHost: 127.0.0.1:54321\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
+            if let origin { header += "Origin: \(origin)\r\n" }
+            return Data((header + "\r\n").utf8) + body
+        }
+        XCTAssertNotNil(PortfolioWebServer.authorizedPath(request: post(), origin: "http://127.0.0.1:54321", token: "secret"))
+        for invalid in [post(path: "/secret/snapshot"), post(origin: nil), post(origin: "https://evil.example"), post(type: "text/plain")] {
+            XCTAssertNil(PortfolioWebServer.authorizedPath(request: invalid, origin: "http://127.0.0.1:54321", token: "secret"))
+        }
+    }
+
+    func testFragmentedNotebookBodyIsNotAuthorizedUntilComplete() {
+        let body = Data("{\"symbol\":\"AAPL\",\"note\":{\"thesis\":\"☕\",\"risks\":\"\",\"catalysts\":\"\"}}".utf8)
+        let header = Data("POST /secret/workspace HTTP/1.1\r\nHost: 127.0.0.1:54321\r\nOrigin: http://127.0.0.1:54321\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\n\r\n".utf8)
+        XCTAssertEqual(PortfolioWebServer.requestLength(header), header.count + body.count)
+        XCTAssertNil(PortfolioWebServer.authorizedPath(request: header, origin: "http://127.0.0.1:54321", token: "secret"))
+        XCTAssertNotNil(PortfolioWebServer.authorizedPath(request: header + body, origin: "http://127.0.0.1:54321", token: "secret"))
+        XCTAssertNil(PortfolioWebServer.authorizedPath(request: header + body + Data("extra".utf8), origin: "http://127.0.0.1:54321", token: "secret"))
+        XCTAssertNil(PortfolioWebServer.requestLength(Data("POST / HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n".utf8)))
+        XCTAssertNil(PortfolioWebServer.requestLength(Data("POST / HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n".utf8)))
+    }
+
+    @MainActor
+    func testDropdownResearchButtonLaunchesIndependentWorkspace() throws {
+        var launches = 0
+        let widget = StockTickerWidget(config: StockTickerConfig(symbols: [], coins: []),
+            notificationsEnabled: false, researchOpener: { launches += 1 })
+        let root = widget.buildDropdownPopover()
+        func button(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == "Open Research Workspace ↗" { return button }
+            return view.subviews.lazy.compactMap { button(in: $0) }.first
+        }
+        let action = try XCTUnwrap(button(in: root))
+        action.performClick(nil)
+        XCTAssertEqual(launches, 1, "The actual dropdown action must dispatch to the independent launcher")
+        widget.stop()
+        XCTAssertEqual(launches, 1, "Stopping the widget must not own or stop the research process")
+    }
+
 }

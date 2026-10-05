@@ -728,12 +728,12 @@ class StockTickerWidget: BaristaWidget {
     fileprivate var popoverVC: MarketPopoverController?
     private var previousPrices: [String: Double] = [:]
 
-    private var researchServer: PortfolioWebServer?
+    private let notificationsEnabled: Bool
+    private let researchOpener: () -> Void
     private var dashboardLeaseUntil = Date.distantPast
 
     func openResearchDashboard() {
-        if researchServer == nil { researchServer = PortfolioWebServer(widget: self) }
-        researchServer?.open()
+        researchOpener()
     }
 
     func dashboardHeartbeat() {
@@ -860,9 +860,29 @@ class StockTickerWidget: BaristaWidget {
         max(3, effectiveRefreshInterval * 0.8)
     }
 
-    required init(config: StockTickerConfig) {
+    required convenience init(config: StockTickerConfig) {
+        self.init(config: config, notificationsEnabled: true)
+    }
+
+    init(config: StockTickerConfig, notificationsEnabled: Bool,
+         researchOpener: @escaping () -> Void = ResearchWorkspaceLauncher.open) {
         self.config = config
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        self.notificationsEnabled = notificationsEnabled
+        self.researchOpener = researchOpener
+        if notificationsEnabled {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+    }
+
+    /// Follow persisted app edits without creating status items or writing the ledger.
+    func applyResearchConfiguration(_ config: StockTickerConfig) {
+        self.config = config
+        quotes.removeAll { quote in
+            quote.kind == .stock ? !config.symbols.contains(quote.symbol)
+                : !config.coins.contains(where: { (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == quote.symbol })
+        }
+        failedSymbols = failedSymbols.intersection(Set(config.symbols))
+        refreshNow()
     }
 
     func start() {
@@ -893,7 +913,6 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func stop() {
-        researchServer = nil
         dashboardLeaseUntil = .distantPast
         timer?.invalidate()
         timer = nil
@@ -1467,6 +1486,7 @@ class StockTickerWidget: BaristaWidget {
             q.minuteCloses = fullCloses
             q.minuteTimes = fullTimes
             DispatchQueue.main.async {
+                guard isIndex || self.config.symbols.contains(symbol) else { return }
                 self.failedSymbols.remove(symbol)
                 self.lastFetchFailed = false
                 self.isUsingCachedData = false
@@ -1620,6 +1640,7 @@ class StockTickerWidget: BaristaWidget {
     /// are merely watching is information, but one on a position you are carrying
     /// overnight is a decision.
     func checkEarningsAlerts() {
+        guard notificationsEnabled else { return }
         let cal = Calendar.current
         var notified = earningsNotified
         var changed = false
@@ -1691,7 +1712,7 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private func checkPriceAlert(symbol: String, newPrice: Double) {
-        guard let target = config.priceAlerts[symbol] else { return }
+        guard notificationsEnabled, let target = config.priceAlerts[symbol] else { return }
         guard let oldPrice = previousPrices[symbol] else { return }
         let crossedAbove = oldPrice < target && newPrice >= target
         let crossedBelow = oldPrice > target && newPrice <= target

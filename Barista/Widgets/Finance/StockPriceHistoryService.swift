@@ -55,6 +55,8 @@ struct StockPriceHistory {
     let symbol: String
     let range: StockChartRange
     let currency: String
+    let instrumentType: String?
+    let companyName: String?
     let exchangeTimezone: String
     let previousClose: Double?
     let fetchedAt: Date
@@ -156,6 +158,8 @@ final class StockPriceHistoryService {
         return StockPriceHistory(symbol: symbol,
                                  range: range,
                                  currency: currency,
+                                 instrumentType: meta?["instrumentType"] as? String,
+                                 companyName: meta?["longName"] as? String ?? meta?["shortName"] as? String,
                                  exchangeTimezone: timezone,
                                  previousClose: previousClose,
                                  fetchedAt: Date(),

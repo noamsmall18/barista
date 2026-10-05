@@ -290,3 +290,11 @@ Supported pipe params: `color`, `font`, `size`, `href`, `bash`, `param1-5`, `ter
 ## License
 
 MIT - see [LICENSE](LICENSE).
+
+### Marketbar research without an app
+
+Run `./build-research.sh`, `./install-research.sh`, then `./open-research.sh`.
+This installs only Marketbar's independent background research service and opens
+its browser workspace. Marketbar and Barista menu-bar apps can be removed.
+The service starts at login, retains existing Marketbar portfolios and research,
+and serves every workspace feature. See [the research desk guide](docs/research-workspace.md).

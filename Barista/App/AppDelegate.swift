@@ -156,7 +156,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        window.title = "About Barista"
+        window.title = "About " + AppFlavor.current.displayName
         window.isReleasedWhenClosed = true
         window.backgroundColor = .clear
         window.titlebarAppearsTransparent = true
@@ -192,7 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         y -= logoSize + 12
 
         // App name
-        let nameLabel = NSTextField(labelWithString: "Barista")
+        let nameLabel = NSTextField(labelWithString: AppFlavor.current.displayName)
         nameLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
         nameLabel.textColor = Theme.textPrimary
         nameLabel.alignment = .center
@@ -288,7 +288,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         guard let window = settingsWindow else { return }
-        window.title = "Barista"
+        window.title = AppFlavor.current.displayName
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.backgroundColor = .clear
@@ -425,7 +425,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         logoView.layer?.shadowOpacity = 1.0
         titleBar.addSubview(logoView)
 
-        let appTitle = NSTextField(labelWithString: "Barista")
+        let appTitle = NSTextField(labelWithString: AppFlavor.current.displayName)
         appTitle.font = NSFont.systemFont(ofSize: 24, weight: .bold)
         appTitle.textColor = Theme.textPrimary
         appTitle.frame = NSRect(x: pad + logoSize + 16, y: 30, width: 200, height: 30)
@@ -442,10 +442,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         accentLine.layer?.shadowOffset = .zero
         titleBar.addSubview(accentLine)
 
-        let subtitle = NSTextField(labelWithString: "Your menu bar, your way")
+        let tagline = AppFlavor.current == .marketbar ? "Your market terminal" : "Your menu bar, your way"
+        let subtitle = NSTextField(labelWithString: tagline)
         subtitle.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         subtitle.textColor = Theme.textMuted
-        let subtitleAttr = NSMutableAttributedString(string: "Your menu bar, your way")
+        let subtitleAttr = NSMutableAttributedString(string: tagline)
         subtitleAttr.addAttribute(.kern, value: 0.8, range: NSRange(location: 0, length: subtitleAttr.length))
         subtitleAttr.addAttribute(.font, value: NSFont.systemFont(ofSize: 11, weight: .regular), range: NSRange(location: 0, length: subtitleAttr.length))
         subtitleAttr.addAttribute(.foregroundColor, value: Theme.textMuted, range: NSRange(location: 0, length: subtitleAttr.length))
@@ -982,7 +983,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         aboutBtn.wantsLayer = true
         aboutBtn.bezelStyle = .inline
         aboutBtn.isBordered = false
-        aboutBtn.title = "About Barista..."
+        aboutBtn.title = "About " + AppFlavor.current.displayName + "..."
         aboutBtn.font = NSFont.systemFont(ofSize: 12, weight: .medium)
         aboutBtn.contentTintColor = Theme.textSecondary
         aboutBtn.layer?.cornerRadius = 8
@@ -1007,7 +1008,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Footer
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let footer = NSTextField(labelWithString: "Barista v\(version)")
+        let footer = NSTextField(labelWithString: "\(AppFlavor.current.displayName) v\(version)")
         footer.font = NSFont.systemFont(ofSize: 10, weight: .regular)
         footer.textColor = Theme.textMuted.withAlphaComponent(0.4)
         footer.alignment = .center
@@ -2545,7 +2546,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func exportCurrentProfile() {
-        ProfileExporter.exportCurrent(name: "My Barista Layout")
+        ProfileExporter.exportCurrent(name: "My " + AppFlavor.current.displayName + " Layout")
     }
 
     @objc func importProfile() {
