@@ -240,3 +240,6 @@ dialog { background: var(--panel); border: 1px solid #aebaa2; border-radius: 5px
 #add-company-error { font-size: 11px; color: var(--red); margin-top: 16px; }
 #command-add { margin-top: 15px; width: 100%; }
 @media(max-width:620px) { #open-add-company { grid-column: 1; grid-row: 2; justify-self: start; margin: 0; }.universe-head .search { grid-row: 3; } }
+
+.marketbar-logo { width: 52px; height: 52px; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 18px #0005; }
+@media(max-width:900px) { .marketbar-logo { width: 36px; height: 36px; border-radius: 8px; } }

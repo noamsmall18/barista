@@ -169,12 +169,12 @@ final class EarningsCalendarService {
 
     private func saveCache() {
         guard let data = try? JSONEncoder().encode(Array(events.values)) else { return }
-        UserDefaults.standard.set(data, forKey: Self.cacheKey)
-        UserDefaults.standard.set(lastFetch, forKey: Self.cacheKey + ".date")
+        ResearchWorkspaceDefaults.shared.set(data, forKey: Self.cacheKey)
+        ResearchWorkspaceDefaults.shared.set(lastFetch, forKey: Self.cacheKey + ".date")
     }
 
     private func loadCache() {
-        guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
+        guard let data = ResearchWorkspaceDefaults.shared.data(forKey: Self.cacheKey),
               let cached = try? JSONDecoder().decode([Event].self, from: data) else { return }
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
@@ -184,7 +184,7 @@ final class EarningsCalendarService {
             map[e.symbol] = e
         }
         events = map
-        lastFetch = UserDefaults.standard.object(forKey: Self.cacheKey + ".date") as? Date
+        lastFetch = ResearchWorkspaceDefaults.shared.object(forKey: Self.cacheKey + ".date") as? Date
     }
 }
 

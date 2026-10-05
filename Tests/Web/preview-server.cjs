@@ -23,8 +23,8 @@ const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,'http://127.0.0.1'),route=url.pathname.split('/').filter(Boolean).at(-1)||'';
   res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
   res.setHeader('Cache-Control','no-store');
-  const files={'':'index.html','app.js':'app.js','style.css':'style.css','analytics.js':'analytics.js','desk-model.js':'desk-model.js','desk.js':'desk.js'};
-  if(Object.hasOwn(files,route)){const file=files[route];res.setHeader('Content-Type',file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html');const bytes=fs.readFileSync(path.join(__dirname,'../../Barista/Web',file));res.end(file==='index.html'?bytes.toString().replace('RESEARCH DESK</span>','SAMPLE DATA / RESEARCH DESK</span>').replace('MARKETBAR / INDEPENDENT THINKING','OFFLINE PREVIEW / SAMPLE DATA'):bytes);return;}
+  const files={'':'index.html','app.js':'app.js','style.css':'style.css','marketbar-logo.png':'marketbar-logo.png','analytics.js':'analytics.js','desk-model.js':'desk-model.js','desk.js':'desk.js'};
+  if(Object.hasOwn(files,route)){const file=files[route];res.setHeader('Content-Type',file.endsWith('.png')?'image/png':file.endsWith('.css')?'text/css':file.endsWith('.js')?'text/javascript':'text/html');const bytes=fs.readFileSync(path.join(__dirname,'../../Barista/Web',file));res.end(file==='index.html'?bytes.toString().replace('RESEARCH DESK</span>','SAMPLE DATA / RESEARCH DESK</span>').replace('MARKETBAR / INDEPENDENT THINKING','OFFLINE PREVIEW / SAMPLE DATA'):bytes);return;}
   res.setHeader('Content-Type','application/json');
   const symbol=url.searchParams.get('symbol')||'AAPL',q=quotes.find(q=>q.symbol===symbol)||quotes[0];
   if(route==='workspace'){

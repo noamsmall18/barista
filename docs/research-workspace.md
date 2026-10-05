@@ -14,7 +14,9 @@ For a Marketbar workspace with no menu-bar app installed:
 ```
 
 This builds only `dist/MarketbarResearch.bundle` and installs the headless service
-at `~/Library/Application Support/Marketbar/Research/Service.bundle`. The installer
+at `~/Library/Application Support/Marketbar/Research/Service.bundle`. The helper
+has its own bundle identifier and explicitly reads the existing Marketbar
+preferences domain. It is a headless bundle, not a second app. The installer
 registers `com.noam.marketbar.research` in your user LaunchAgents, so macOS starts
 the service at login and restarts it if it crashes. Both menu-bar apps can be
 removed; the research service has its own executable and web assets. Opening the
@@ -25,6 +27,11 @@ If you also use a menu-bar app, **Open Research Workspace** in its ticker dropdo
 opens the same independent service. `./build-app.sh` still packages companions for
 both repo products; the standalone build and install commands above install only
 Marketbar.
+
+The native app allows one running instance per product. Opening another build
+copy reopens the existing settings window instead of adding another menu-bar
+item. Keep `/Applications/Marketbar.app` as the installed copy; `dist` is build
+output. The research service has its own process and lifetime.
 
 All five workspaces, company lookup, live quotes, price history, SEC financials,
 analyst expectations, news, notebooks, evidence, research questions, valuation,
@@ -185,6 +192,7 @@ spreadsheet formula prefixes. No external packages, scripts, or fonts are used.
 ```sh
 node --test Tests/Web/*.test.cjs
 swiftc Barista/Widgets/Finance/ResearchWorkspaceRequest.swift \
+  Barista/Widgets/Finance/ResearchWorkspaceDefaults.swift \
   Barista/Widgets/Finance/ResearchWorkspaceStore.swift \
   Tests/ResearchWorkspaceSmoke.swift -o /tmp/research-smoke
 /tmp/research-smoke

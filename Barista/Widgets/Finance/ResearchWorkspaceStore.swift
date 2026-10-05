@@ -6,7 +6,7 @@ import CoreFoundation
 enum ResearchWorkspaceStore {
     private static let key = "marketbar.researchWorkspace.v1"
 
-    static func load(defaults: UserDefaults = .standard) -> [String: Any] {
+    static func load(defaults: UserDefaults = ResearchWorkspaceDefaults.shared) -> [String: Any] {
         defaults.synchronize()
         guard let data = defaults.data(forKey: key),
               let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -16,7 +16,7 @@ enum ResearchWorkspaceStore {
     }
 
     @discardableResult
-    static func save(_ data: Data, defaults: UserDefaults = .standard) -> Bool {
+    static func save(_ data: Data, defaults: UserDefaults = ResearchWorkspaceDefaults.shared) -> Bool {
         guard data.count <= 245_760,
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               !update.isEmpty, Set(update.keys).isSubset(of: ["symbol", "note", "preferences"]) else { return false }

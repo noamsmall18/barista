@@ -1153,7 +1153,7 @@ class StockTickerWidget: BaristaWidget {
 
     private func loadCachedQuotesIfNeeded() {
         guard quotes.isEmpty,
-              let data = UserDefaults.standard.data(forKey: Self.quoteCacheKey),
+              let data = ResearchWorkspaceDefaults.shared.data(forKey: Self.quoteCacheKey),
               let payload = try? JSONDecoder().decode(QuoteCachePayload.self, from: data)
         else { return }
 
@@ -1186,7 +1186,7 @@ class StockTickerWidget: BaristaWidget {
             lastUpdated: lastUpdated ?? Date()
         )
         if let data = try? JSONEncoder().encode(payload) {
-            UserDefaults.standard.set(data, forKey: Self.quoteCacheKey)
+            ResearchWorkspaceDefaults.shared.set(data, forKey: Self.quoteCacheKey)
         }
     }
 
@@ -1617,8 +1617,8 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private var earningsNotified: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: Self.earningsNotifiedKey) as? [String: String] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: Self.earningsNotifiedKey) }
+        get { ResearchWorkspaceDefaults.shared.dictionary(forKey: Self.earningsNotifiedKey) as? [String: String] ?? [:] }
+        set { ResearchWorkspaceDefaults.shared.set(newValue, forKey: Self.earningsNotifiedKey) }
     }
 
     /// Total shares held of a symbol, and which portfolios hold it.

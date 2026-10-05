@@ -49,17 +49,21 @@ bundle() {
     cp -R "$ROOT/Barista/Web" "$app/Contents/Resources/Web"
     # Separate executable process, sharing only the flavor's preferences and
     # shipped Swift services. It bypasses NSApplication and AppDelegate entirely.
-    helper="$app/Contents/Resources/Research.app"
+    helper="$app/Contents/Resources/Research.bundle"
     "$ROOT/scripts/bundle-research.sh" "$BIN" "$helper" "$name" "$plist" "$ROOT/Barista"
     # Double-click this launcher to open research with the menu-bar app closed.
     launcher="$ROOT/dist/Open $name Research.command"
     cat > "$launcher" <<LAUNCHER
 #!/bin/sh
 RESEARCH_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
-nohup "\$RESEARCH_ROOT/$name.app/Contents/Resources/Research.app/Contents/MacOS/${name}Research" >/dev/null 2>&1 </dev/null &
+nohup "\$RESEARCH_ROOT/$name.app/Contents/Resources/Research.bundle/Contents/MacOS/${name}Research" >/dev/null 2>&1 </dev/null &
 LAUNCHER
     chmod +x "$launcher"
-    [ -f "$ROOT/AppIcon.icns" ] && cp "$ROOT/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+    if [ "$name" = "Marketbar" ]; then
+        cp "$ROOT/Branding/MarketbarIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+    elif [ -f "$ROOT/AppIcon.icns" ]; then
+        cp "$ROOT/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
+    fi
     codesign --force --deep --sign - \
         --entitlements "$ROOT/Barista/Barista.entitlements" "$app" 2>/dev/null \
       || codesign --force --deep --sign - "$app"

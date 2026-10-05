@@ -182,7 +182,7 @@ final class PortfolioWebServer {
             }
             return
         }
-        let files = ["": ("index.html", "text/html"), "app.js": ("app.js", "text/javascript"), "analytics.js": ("analytics.js", "text/javascript"), "desk-model.js": ("desk-model.js", "text/javascript"), "desk.js": ("desk.js", "text/javascript"), "style.css": ("style.css", "text/css")]
+        let files = ["": ("index.html", "text/html"), "app.js": ("app.js", "text/javascript"), "analytics.js": ("analytics.js", "text/javascript"), "desk-model.js": ("desk-model.js", "text/javascript"), "desk.js": ("desk.js", "text/javascript"), "style.css": ("style.css", "text/css"), "marketbar-logo.png": ("marketbar-logo.png", "image/png")]
         guard let (file, mime) = files[path], let data = Self.asset(file) else { respond(connection, status: 404); return }
         respond(connection, body: data, mime: mime)
     }

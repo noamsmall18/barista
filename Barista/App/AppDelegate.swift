@@ -3,6 +3,7 @@ import ServiceManagement
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     let statusBarController = StatusBarController()
+    private var reopenObserver: NSObjectProtocol?
     var settingsWindow: NSWindow?
     var settingsScrollView: NSScrollView!
     var settingsContentView: NSView!
@@ -24,6 +25,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var sparkleUpdater: AnyObject?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        reopenObserver = DistributedNotificationCenter.default().addObserver(
+            forName: NSNotification.Name("MarketbarShowSettings"), object: AppFlavor.current.defaultsSuite, queue: .main
+        ) { [weak self] _ in self?.showSettingsWindow() }
         // Marketbar has its own preferences domain, so on its first run it
         // carries the user's portfolios and history over from Barista. Reads
         // only; Barista's copy is left exactly as it was.

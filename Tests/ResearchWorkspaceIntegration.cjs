@@ -10,16 +10,20 @@ const {once} = require('node:events');
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
 const product=process.env.RESEARCH_PRODUCT||'Marketbar';
 const standalone=path.join(__dirname,`../dist/${product}Research.bundle`);
-const built=process.env.RESEARCH_BUNDLE|| (fs.existsSync(standalone)?standalone:path.join(__dirname,`../dist/${product}.app/Contents/Resources/Research.app`));
+const built=process.env.RESEARCH_BUNDLE|| (fs.existsSync(standalone)?standalone:path.join(__dirname,`../dist/${product}.app/Contents/Resources/Research.bundle`));
 
 test('real helper serves a complete desk, survives launcher exit, and restores saves after restart', {timeout:90000}, async t=>{
   assert.ok(fs.existsSync(built),'Build the app before running this integration check.');
+  const bundleID=execFileSync('/usr/libexec/PlistBuddy',['-c','Print :CFBundleIdentifier',path.join(built,'Contents/Info.plist')],{encoding:'utf8'}).trim();
+  const suite=execFileSync('/usr/libexec/PlistBuddy',['-c','Print :BAResearchDefaultsSuite',path.join(built,'Contents/Info.plist')],{encoding:'utf8'}).trim();
+  assert.notEqual(bundleID,suite,'The service must never register as another copy of the menu-bar app.');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'research-integration-'));
   const bundle=path.join(root,built.endsWith('.bundle')?'Research.bundle':'Research.app'),domain=`com.noam.research-test-${process.pid}`;
   const session=path.join(root,'session');
   fs.cpSync(built,bundle,{recursive:true});
   const plist=path.join(bundle,'Contents/Info.plist');
-  execFileSync('/usr/libexec/PlistBuddy',['-c',`Set :CFBundleIdentifier ${domain}`,plist]);
+  execFileSync('/usr/libexec/PlistBuddy',['-c',`Set :CFBundleIdentifier ${domain}.service`,plist]);
+  execFileSync('/usr/libexec/PlistBuddy',['-c',`Set :BAResearchDefaultsSuite ${domain}`,plist]);
   execFileSync('/usr/bin/codesign',['--force','--sign','-',bundle],{stdio:'ignore'});
   const executable=path.join(bundle,`Contents/MacOS/${product}Research`);
   let child;
@@ -64,6 +68,7 @@ test('real helper serves a complete desk, survives launcher exit, and restores s
     assert.ok((await response.text()).length>100,file);
     assert.match(response.headers.get('content-security-policy'),/connect-src 'self'/);
   }
+  const logo=await fetch(new URL('marketbar-logo.png',url));assert.equal(logo.status,200);assert.match(logo.headers.get('content-type'),/image\/png/);assert.ok((await logo.arrayBuffer()).byteLength>1000);
   // The second launcher exits; the original independent service remains alive.
   const second=spawn(executable,['--no-open','--session-directory',session]);let secondOutput='';
   second.stdout.on('data',d=>secondOutput+=d);

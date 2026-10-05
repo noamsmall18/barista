@@ -195,11 +195,11 @@ final class BenchmarkSeries {
             }
         }
         guard let data = try? JSONEncoder().encode(encodable) else { return }
-        UserDefaults.standard.set(data, forKey: Self.storeKey)
+        ResearchWorkspaceDefaults.shared.set(data, forKey: Self.storeKey)
     }
 
     private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.storeKey),
+        guard let data = ResearchWorkspaceDefaults.shared.data(forKey: Self.storeKey),
               let decoded = try? JSONDecoder().decode([String: [String: Double]].self, from: data)
         else { return }
         dailyCloses = decoded.mapValues { inner in

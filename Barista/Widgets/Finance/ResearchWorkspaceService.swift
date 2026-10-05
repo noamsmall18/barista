@@ -10,7 +10,7 @@ enum ResearchWorkspaceService {
         var port: UInt16? { url.port.flatMap(UInt16.init(exactly:)) }
     }
 
-    static func configurationData(defaults: UserDefaults = .standard) -> Data? {
+    static func configurationData(defaults: UserDefaults = ResearchWorkspaceDefaults.shared) -> Data? {
         defaults.synchronize()
         if let raw = defaults.data(forKey: "barista.activeWidgets"),
            let widgets = try? JSONDecoder().decode([SavedWidget].self, from: raw),
@@ -20,7 +20,7 @@ enum ResearchWorkspaceService {
         return nil
     }
 
-    static func configuration(defaults: UserDefaults = .standard) -> StockTickerConfig {
+    static func configuration(defaults: UserDefaults = ResearchWorkspaceDefaults.shared) -> StockTickerConfig {
         configurationData(defaults: defaults).flatMap { try? JSONDecoder().decode(StockTickerConfig.self, from: $0) } ?? .default
     }
 
@@ -126,7 +126,7 @@ enum ResearchWorkspaceLauncher {
         let name = AppFlavor.current.displayName
         let installed = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent(name + "/Research/Service.bundle/Contents/MacOS/" + name + "Research")
-        let embedded = resources.appendingPathComponent("Research.app/Contents/MacOS/" + name + "Research")
+        let embedded = resources.appendingPathComponent("Research.bundle/Contents/MacOS/" + name + "Research")
         let executable = installed.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil } ?? embedded
         let process = Process()
         process.executableURL = executable
