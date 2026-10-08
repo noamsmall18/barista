@@ -1,161 +1,145 @@
 import Cocoa
+import QuartzCore
 
-class TickerScrollView: NSView {
-    private var tickerText: String = "Loading..."
-    private var attrText: NSAttributedString?
-    private var offset: CGFloat = 0
-    private var textWidth: CGFloat = 0
-    private var displayLink: CVDisplayLink?
+/// Rasterize a quote tape only when its content changes. Core Animation moves
+/// the cached layers, eliminating display-link callbacks, main-queue work and
+/// new text/mask images on every frame. Quote fetching is independent of this.
+final class TickerScrollView: NSView {
+    private let tape = CALayer()
+    private let firstCopy = CALayer()
+    private let secondCopy = CALayer()
+    private let fade = CAGradientLayer()
     private let textFont = NSFont.systemFont(ofSize: 12, weight: .medium)
-    var speed: CGFloat = 0.3
-    /// Pause scrolling briefly after each full cycle for readability
-    private var pauseCounter: Int = 0
-    private let pauseFrames: Int = 90  // ~1.5 seconds at 60fps
-    /// Gap between repeated text
     private let textGap: CGFloat = 60
+    private var attributedText = NSAttributedString(string: "Loading…")
+    private var textWidth: CGFloat = 0
+    private var pausedOffset: CGFloat = 0
+    private(set) var isAnimating = false
+    var speed: CGFloat = 0.3 {
+        didSet {
+            guard speed != oldValue else { return }
+            preserveOffset()
+            updateAnimation()
+        }
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        startDisplayLink()
+        layer?.masksToBounds = true
+        layer?.addSublayer(tape)
+        tape.addSublayer(firstCopy)
+        tape.addSublayer(secondCopy)
+        fade.colors = [NSColor.clear.cgColor, NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        fade.startPoint = CGPoint(x: 0, y: 0.5)
+        fade.endPoint = CGPoint(x: 1, y: 0.5)
+        updateText("Loading…")
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func updateText(_ text: String) {
-        tickerText = text
-        attrText = nil
-        let attrs: [NSAttributedString.Key: Any] = [.font: textFont]
-        textWidth = (text as NSString).size(withAttributes: attrs).width
+        updateAttributedText(NSAttributedString(string: text, attributes: [.font: textFont, .foregroundColor: NSColor.headerTextColor]))
     }
 
     func updateAttributedText(_ text: NSAttributedString) {
-        attrText = text
-        textWidth = text.size().width
+        guard text != attributedText || textWidth == 0 else { return }
+        preserveOffset()
+        attributedText = text.copy() as! NSAttributedString
+        renderText()
+        updateAnimation()
+        setAccessibilityLabel(text.string)
     }
 
-    private func startDisplayLink() {
-        var dl: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&dl)
-        guard let displayLink = dl else { return }
-        self.displayLink = displayLink
-        CVDisplayLinkSetOutputHandler(displayLink) { [weak self] _, _, _, _, _ in
-            DispatchQueue.main.async { self?.tick() }
-            return kCVReturnSuccess
-        }
-        CVDisplayLinkStart(displayLink)
+    private func preserveOffset() {
+        if let presentation = tape.presentation() { pausedOffset = max(0, -presentation.transform.m41) }
+        tape.removeAnimation(forKey: "scroll")
+        isAnimating = false
     }
 
-    private func tick() {
-        guard textWidth > 0 else { return }
-
-        // If text fits without scrolling, don't scroll
-        if textWidth <= bounds.width {
-            offset = 0
-            needsDisplay = true
-            return
+    private func renderText() {
+        textWidth = ceil(attributedText.size().width)
+        guard textWidth > 0, bounds.height > 0 else { return }
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let size = NSSize(width: textWidth, height: bounds.height)
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                            pixelsWide: max(1, Int(ceil(size.width * scale))),
+                                            pixelsHigh: max(1, Int(ceil(size.height * scale))),
+                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return }
+        bitmap.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        context.cgContext.scaleBy(x: scale, y: scale)
+        let y = (size.height - textFont.ascender + textFont.descender) / 2
+        attributedText.draw(at: NSPoint(x: 0, y: y))
+        NSGraphicsContext.restoreGraphicsState()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for copy in [firstCopy, secondCopy] {
+            copy.contents = bitmap.cgImage
+            copy.contentsScale = scale
+            copy.frame = NSRect(origin: .zero, size: size)
         }
-
-        if pauseCounter > 0 {
-            pauseCounter -= 1
-            return
-        }
-
-        offset += speed
-        if offset >= textWidth + textGap {
-            offset = 0
-            pauseCounter = pauseFrames
-        }
-        needsDisplay = true
+        secondCopy.frame.origin.x = textWidth + textGap
+        tape.transform = CATransform3DIdentity
+        tape.frame = NSRect(x: 0, y: 0, width: textWidth * 2 + textGap, height: size.height)
+        CATransaction.commit()
     }
 
-    override var wantsUpdateLayer: Bool { false }
+    private func updateAnimation() {
+        let overflow = textWidth > bounds.width && bounds.width > 0
+        let shouldAnimate = overflow && window != nil && !isHiddenOrHasHiddenAncestor
+            && speed.isFinite && speed > 0 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let cycle = textWidth + textGap
+        pausedOffset = overflow ? pausedOffset.truncatingRemainder(dividingBy: max(1, cycle)) : 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        secondCopy.isHidden = !overflow
+        tape.transform = CATransform3DMakeTranslation(-pausedOffset, 0, 0)
+        fade.frame = bounds
+        let fraction = min(0.5, 20 / max(1, bounds.width))
+        fade.locations = [0, NSNumber(value: Double(fraction)), NSNumber(value: Double(1 - fraction)), 1]
+        layer?.mask = overflow ? fade : nil
+        CATransaction.commit()
+        guard shouldAnimate else { isAnimating = false; return }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        let bounds = self.bounds
-        let fadeWidth: CGFloat = 20
-
-        let img = NSImage(size: bounds.size, flipped: false) { imgRect in
-            let y = (imgRect.height - self.textFont.ascender + self.textFont.descender) / 2
-
-            let gap = self.textGap
-
-            if let attr = self.attrText {
-                attr.draw(at: NSPoint(x: -self.offset, y: y))
-                if self.textWidth > imgRect.width {
-                    attr.draw(at: NSPoint(x: -self.offset + self.textWidth + gap, y: y))
-                }
-            } else {
-                let attrs: [NSAttributedString.Key: Any] = [
-                    .font: self.textFont,
-                    .foregroundColor: NSColor.headerTextColor
-                ]
-                let str = self.tickerText as NSString
-                str.draw(at: NSPoint(x: -self.offset, y: y), withAttributes: attrs)
-                if self.textWidth > imgRect.width {
-                    str.draw(at: NSPoint(x: -self.offset + self.textWidth + gap, y: y), withAttributes: attrs)
-                }
-            }
-            return true
-        }
-
-        let maskImage = CGImage.fadeMask(size: bounds.size, fadeWidth: fadeWidth)
-        ctx.saveGState()
-        if let maskImg = maskImage { ctx.clip(to: bounds, mask: maskImg) }
-        img.draw(in: bounds)
-        ctx.restoreGState()
+        // Keep the original speed (points per 60-Hz frame) and 1.5s loop pause.
+        let pointsPerSecond = Double(speed * 60)
+        let travelTime = Double(cycle) / pointsPerSecond
+        let duration = travelTime + 1.5
+        let animation = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        animation.values = [0, -cycle, -cycle]
+        animation.keyTimes = [0, NSNumber(value: travelTime / duration), 1]
+        animation.calculationMode = .linear
+        animation.duration = duration
+        animation.repeatCount = .infinity
+        animation.beginTime = tape.convertTime(CACurrentMediaTime(), from: nil) - Double(pausedOffset) / pointsPerSecond
+        tape.add(animation, forKey: "scroll")
+        isAnimating = true
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-    override func removeFromSuperview() {
-        if let dl = displayLink { CVDisplayLinkStop(dl); displayLink = nil }
-        super.removeFromSuperview()
+    override func layout() {
+        super.layout()
+        preserveOffset()
+        if firstCopy.frame.height != bounds.height { renderText() }
+        updateAnimation()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil {
-            // Removed from window hierarchy - pause display link
-            if let dl = displayLink { CVDisplayLinkStop(dl) }
-        } else if let dl = displayLink, !CVDisplayLinkIsRunning(dl) {
-            // Re-added to a window - resume
-            CVDisplayLinkStart(dl)
-        } else if displayLink == nil {
-            // Display link was fully torn down - recreate
-            startDisplayLink()
-        }
+        preserveOffset()
+        renderText()
+        updateAnimation()
     }
 
-    deinit {
-        if let dl = displayLink { CVDisplayLinkStop(dl) }
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        renderText()
     }
-}
 
-extension CGImage {
-    static func fadeMask(size: NSSize, fadeWidth: CGFloat) -> CGImage? {
-        let w = Int(size.width)
-        let h = Int(size.height)
-        guard let ctx = CGContext(
-            data: nil, width: w, height: h,
-            bitsPerComponent: 8, bytesPerRow: w,
-            space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else { return nil }
-
-        ctx.setFillColor(gray: 1, alpha: 1)
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
-
-        let left = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(),
-            colors: [CGColor(gray: 0, alpha: 1), CGColor(gray: 1, alpha: 1)] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(left, start: .zero, end: CGPoint(x: fadeWidth, y: 0), options: [])
-
-        let right = CGGradient(colorsSpace: CGColorSpaceCreateDeviceGray(),
-            colors: [CGColor(gray: 1, alpha: 1), CGColor(gray: 0, alpha: 1)] as CFArray, locations: [0, 1])!
-        ctx.drawLinearGradient(right, start: CGPoint(x: CGFloat(w) - fadeWidth, y: 0),
-            end: CGPoint(x: CGFloat(w), y: 0), options: [])
-
-        return ctx.makeImage()
-    }
+    override func viewDidHide() { super.viewDidHide(); preserveOffset(); updateAnimation() }
+    override func viewDidUnhide() { super.viewDidUnhide(); updateAnimation() }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

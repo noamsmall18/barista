@@ -76,7 +76,6 @@ struct Portfolio: Codable, Equatable {
     /// Recomputes the cached holdings, cost basis and realised profit.
     /// Call after any change to `transactions`.
     mutating func applyLedger() {
-        guard !transactions.isEmpty else { realized = [:]; return }
         let state = Ledger.derive(from: transactions)
         holdings = state.holdings
         costBasis = state.costBasis
@@ -84,13 +83,67 @@ struct Portfolio: Codable, Equatable {
     }
 
     mutating func record(_ transaction: Transaction) {
+        guard !transactions.contains(where: { $0.id == transaction.id }) else { return }
+        if let delta = transaction.cashDelta { cash += delta }
         transactions.append(transaction)
         applyLedger()
     }
 
-    mutating func removeTransaction(id: String) {
-        transactions.removeAll { $0.id == id }
+    /// New purchases use existing cash; historical entries and manual position
+    /// corrections use `record` so migration does not charge them again.
+    @discardableResult
+    mutating func recordFundedTrade(_ transaction: Transaction,
+                                   allowCashOverdraft: Bool = false) -> Bool {
+        guard transaction.kind == .buy || transaction.kind == .sell,
+              !transaction.symbol.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              transaction.quantity.isFinite, transaction.quantity > 0,
+              transaction.price.isFinite, transaction.price > 0,
+              cash.isFinite,
+              !transactions.contains(where: { $0.id == transaction.id }) else { return false }
+        let amount = transaction.quantity * transaction.price
+        guard amount.isFinite, amount > 0 else { return false }
+        let roundingTolerance = max(amount.ulp, cash.ulp) * 4
+        if transaction.kind == .buy, !allowCashOverdraft,
+           (cash < 0 || amount > cash + roundingTolerance) { return false }
+        if transaction.kind == .sell, transaction.quantity > (holdings[transaction.symbol] ?? 0) { return false }
+        // A fractional-share product may differ from the exact cash balance by
+        // a few floating-point ULPs. Store the amount actually transferred so
+        // the default exact-cash purchase still leaves cash at zero. An approved
+        // overdraft always records the full consideration, including when cash
+        // is already below zero.
+        let delta: Double
+        if transaction.kind == .buy {
+            delta = allowCashOverdraft ? -amount : -min(amount, cash)
+        } else {
+            delta = amount
+        }
+        guard (cash + delta).isFinite else { return false }
+        var funded = transaction
+        funded.cashDelta = delta
+        guard Ledger.supportsFundedSales(transactions + [funded]) else { return false }
+        record(funded)
+        return true
+    }
+
+    @discardableResult
+    mutating func removeTransaction(id: String) -> Bool {
+        let matches = transactions.indices.filter { transactions[$0].id == id }
+        // Duplicate identifiers cannot be safely reversed as one action.
+        guard matches.count == 1 else { return false }
+        let index = matches[0]
+        let removed = transactions[index]
+        var remaining = transactions
+        remaining.remove(at: index)
+        guard Ledger.supportsFundedSales(remaining) else { return false }
+        let nextCash = cash - (removed.cashDelta ?? 0)
+        // Reversing a trade may relieve an overdraft, but it cannot make the
+        // current debt deeper. This also prevents removing sale proceeds that
+        // have already funded a purchase.
+        guard nextCash.isFinite, nextCash >= min(0, cash) else { return false }
+        cash = nextCash
+        transactions = remaining
         applyLedger()
+        return true
     }
 
     /// Records a manual correction rather than writing the number directly, so
@@ -120,6 +173,42 @@ struct Portfolio: Codable, Equatable {
 
     var isEmpty: Bool {
         cash <= 0 && !holdings.values.contains { $0 > 0 }
+    }
+
+    static let combinedID = "all-portfolios"
+    static let combinedName = "All Portfolios"
+
+    /// A read-only projection. Never replay ledgers together: an adjustment in
+    /// one account would overwrite the same symbol's shares in another account.
+    static func combined(_ portfolios: [Portfolio]) -> Portfolio {
+        var result = Portfolio(id: combinedID, name: combinedName)
+        var investedCost: [String: Double] = [:]
+        var unknownCost = Set<String>()
+        for portfolio in portfolios where portfolio.id != combinedID {
+            result.cash += portfolio.cash
+            for (symbol, quantity) in portfolio.holdings where quantity > 0 {
+                result.holdings[symbol, default: 0] += quantity
+                if let cost = portfolio.costBasis[symbol], cost.isFinite, cost > 0 {
+                    investedCost[symbol, default: 0] += quantity * cost
+                } else {
+                    unknownCost.insert(symbol)
+                }
+            }
+            for (symbol, gain) in portfolio.realized {
+                result.realized[symbol, default: 0] += gain
+            }
+            // Trades retain their account context and cannot collide across accounts.
+            result.transactions += portfolio.tradeHistory.map { transaction in
+                var trade = transaction
+                trade.id = portfolio.id + ":" + trade.id
+                trade.note = portfolio.name + (trade.note.map { " · " + $0 } ?? "")
+                return trade
+            }
+        }
+        for (symbol, cost) in investedCost where !unknownCost.contains(symbol) {
+            result.costBasis[symbol] = cost / result.holdings[symbol]!
+        }
+        return result
     }
 
     // MARK: - Constraints

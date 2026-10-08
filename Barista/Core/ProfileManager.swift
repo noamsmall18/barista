@@ -81,7 +81,7 @@ class ProfileManager {
         }
 
         activeProfileID = id
-        UserDefaults.standard.set(id.uuidString, forKey: activeKey)
+        AppPreferences.shared.set(id.uuidString, forKey: activeKey)
     }
 
     /// Built-in profile presets.
@@ -106,18 +106,18 @@ class ProfileManager {
     // MARK: - Persistence
 
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: key),
+        if let data = AppPreferences.shared.data(forKey: key),
            let decoded = try? JSONDecoder().decode([WidgetProfile].self, from: data) {
             profiles = decoded
         }
-        if let idStr = UserDefaults.standard.string(forKey: activeKey) {
+        if let idStr = AppPreferences.shared.string(forKey: activeKey) {
             activeProfileID = UUID(uuidString: idStr)
         }
     }
 
     private func persist() {
         if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: key)
+            AppPreferences.shared.set(data, forKey: key)
         }
     }
 }

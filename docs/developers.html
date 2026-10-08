@@ -536,15 +536,8 @@
             <pre><span class="cm"># Optimized binary</span>
 <span class="fn">swift</span> build -c release
 
-<span class="cm"># Package as .app</span>
-<span class="fn">mkdir</span> -p dist/Barista.app/Contents/MacOS
-<span class="fn">cp</span> .build/release/Barista dist/Barista.app/Contents/MacOS/
-<span class="fn">cp</span> Barista/Info.plist dist/Barista.app/Contents/
-
-<span class="cm"># Codesign</span>
-<span class="fn">codesign</span> --force --sign - \
-  --entitlements Barista/Barista.entitlements \
-  dist/Barista.app</pre>
+<span class="cm"># Update the one installed app; staging is cleaned automatically</span>
+<span class="fn">./build-app.sh</span> marketbar --install</pre>
           </div>
 
           <h3>Run</h3>
@@ -555,7 +548,7 @@
               <div class="code-block-dot green"></div>
               <span class="code-block-title">Terminal</span>
             </div>
-            <pre><span class="fn">open</span> dist/Barista.app</pre>
+            <pre><span class="fn">open</span> /Applications/Marketbar.app</pre>
           </div>
         </div>
 

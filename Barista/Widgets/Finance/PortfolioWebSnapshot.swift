@@ -17,7 +17,7 @@ enum PortfolioWebSnapshot {
             (config.holdings[symbol] ?? 0) > 0 && !positions.contains { $0.quote.symbol == symbol }
         }.sorted()
         let currencyComparable = positions.allSatisfy { ($0.quote.currency ?? "USD") == "USD" }
-        let cash = max(0, config.cash)
+        let cash = config.cash
         let total = cash + positions.reduce(0) { $0 + $1.value }
         let baseline = cash + positions.reduce(0) { $0 + $1.baselineValue }
         let snapshot = PortfolioSnapshot(positions: positions, missingSymbols: missing, cash: cash,
@@ -34,7 +34,10 @@ enum PortfolioWebSnapshot {
             row["extendedPL"] = number(position?.extendedPL)
             row["unrealizedPL"] = number(position?.totalPL)
             row["unrealizedPercent"] = number(position?.totalPercent)
-            row["weight"] = number(currencyComparable ? position.map { snapshot.liveTotal > 0 ? $0.liveValue / snapshot.liveTotal * 100 : 0 } : nil)
+            row["weight"] = number(currencyComparable ? position.flatMap {
+                snapshot.liveTotal.isFinite && snapshot.liveTotal != 0
+                    ? $0.liveValue / snapshot.liveTotal * 100 : nil
+            } : nil)
             if let event = EarningsCalendarService.shared.event(for: quote.symbol) {
                 row["earnings"] = ["date": event.date.timeIntervalSince1970,
                                    "session": event.session ?? "Unspecified",
@@ -48,6 +51,7 @@ enum PortfolioWebSnapshot {
             "portfolioID": config.activePortfolioID,
             "portfolioName": active?.name ?? "Portfolio",
             "portfolios": config.portfolios.map { ["id": $0.id, "name": $0.name] },
+            "combinedPortfolio": config.isCombinedPortfolioActive,
             "quotes": rows, "indices": indices.map(quoteJSON), "missingSymbols": missing,
             "summary": ["currencyComparable": currencyComparable,
                         "liveTotal": number(currencyComparable ? snapshot.liveTotal : nil), "regularTotal": number(currencyComparable ? total : nil),
@@ -71,6 +75,7 @@ enum PortfolioWebSnapshot {
     static func quoteJSON(_ q: MarketQuote) -> [String: Any] {
         ["symbol": q.symbol, "kind": q.kind.rawValue, "price": number(q.currentPrice),
          "currency": q.currency ?? "USD", "receivedAt": number(q.receivedAt),
+         "source": q.source ?? (q.kind == .stock ? "Yahoo Finance" : "CoinGecko"),
          "regularPrice": number(q.price), "change": number(q.currentChange), "regularChange": number(q.change),
          "previousClose": number(q.previousClose), "dayHigh": number(q.dayHigh), "dayLow": number(q.dayLow),
          "volume": number(q.volume), "marketCap": number(q.marketCap), "pe": number(q.peRatio),

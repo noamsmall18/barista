@@ -6,12 +6,13 @@ import UserNotifications
 struct MarketQuote: Codable, Equatable {
     enum Kind: String, Codable { case stock, crypto }
     let symbol: String
-    let price: Double
-    let change: Double
+    var price: Double
+    var change: Double
     let kind: Kind
     var previousClose: Double? = nil
     var currency: String? = nil
     var receivedAt: Double? = nil
+    var source: String? = nil
     var dayHigh: Double?
     var dayLow: Double?
     var volume: Double?
@@ -32,7 +33,7 @@ struct MarketQuote: Codable, Equatable {
     var minuteTimes: [Double] = []
 
     enum CodingKeys: String, CodingKey {
-        case symbol, price, change, kind, previousClose, currency, receivedAt, dayHigh, dayLow, volume
+        case symbol, price, change, kind, previousClose, currency, receivedAt, source, dayHigh, dayLow, volume
         case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
@@ -119,7 +120,8 @@ struct MarketQuote: Codable, Equatable {
     /// morning's move, measured from the previous close, and the previous day's
     /// session is never appended to it.
     var chartSegments: (points: [Double], breakIndex: Int?) {
-        let (session, extended) = sessionSplit.series(for: marketStatus)
+        let status = kind == .crypto ? MarketStatus.open : marketStatus
+        let (session, extended) = sessionSplit.series(for: status)
         var sessionPoints = session.closes.filter { $0.isFinite && $0 > 0 }
         var extendedPoints = extended.closes.filter { $0.isFinite && $0 > 0 }
 
@@ -400,6 +402,11 @@ enum TickerSortMode: String, Codable, Equatable {
     case manual, alphabetical, changeDesc, changeAsc, priceDesc
 }
 
+enum StockTickerRefreshMode: String, Codable, CaseIterable {
+    case standard
+    case ultraFast
+}
+
 enum TickerAccentPreset: String, Codable, Equatable, CaseIterable {
     case blue, cyan, green, amber, purple, red, white
 
@@ -431,14 +438,34 @@ struct StockTickerConfig: Codable, Equatable {
     // Portfolios - exactly one is active at a time
     var portfolios: [Portfolio]
     var activePortfolioID: String
+    var combinedPortfolioEnabled: Bool = false
+    var lastIndividualPortfolioID: String? = nil
+    // History is scoped to this widget, even when Barista has multiple tickers.
+    var combinedPortfolioHistoryID: String = UUID().uuidString
+
+    var activePortfolioHistoryID: String {
+        isCombinedPortfolioActive ? combinedPortfolioHistoryID : activePortfolioID
+    }
+
+    var isCombinedPortfolioActive: Bool {
+        combinedPortfolioEnabled && activePortfolioID == Portfolio.combinedID
+    }
+
+    var portfolioChoices: [(id: String, name: String)] {
+        let individual = portfolios.map { (id: $0.id, name: $0.name) }
+        return combinedPortfolioEnabled
+            ? [(id: Portfolio.combinedID, name: Portfolio.combinedName)] + individual : individual
+    }
 
     /// Index of the active portfolio, falling back to the first if the id went stale.
     var activePortfolioIndex: Int {
-        portfolios.firstIndex { $0.id == activePortfolioID } ?? 0
+        if isCombinedPortfolioActive { return -1 }
+        return portfolios.firstIndex { $0.id == activePortfolioID } ?? 0
     }
 
     var activePortfolio: Portfolio? {
-        portfolios.indices.contains(activePortfolioIndex) ? portfolios[activePortfolioIndex] : nil
+        if isCombinedPortfolioActive { return Portfolio.combined(portfolios) }
+        return portfolios.indices.contains(activePortfolioIndex) ? portfolios[activePortfolioIndex] : nil
     }
 
     private mutating func mutateActive(_ body: (inout Portfolio) -> Void) {
@@ -472,6 +499,13 @@ struct StockTickerConfig: Codable, Equatable {
 
     mutating func record(_ transaction: Transaction) {
         mutateActive { $0.record(transaction) }
+    }
+
+    @discardableResult
+    mutating func recordFundedTrade(_ transaction: Transaction, allowCashOverdraft: Bool = false) -> Bool {
+        var accepted = false
+        mutateActive { accepted = $0.recordFundedTrade(transaction, allowCashOverdraft: allowCashOverdraft) }
+        return accepted
     }
 
     mutating func mutateActivePortfolio(_ body: (inout Portfolio) -> Void) {
@@ -513,6 +547,7 @@ struct StockTickerConfig: Codable, Equatable {
 
     // Refresh
     var refreshInterval: TimeInterval
+    var refreshMode: StockTickerRefreshMode
 
     // Crypto
     var cryptoCurrency: String
@@ -550,13 +585,14 @@ struct StockTickerConfig: Codable, Equatable {
         showPERatio: false,
         sortMode: .manual,
         refreshInterval: 5,
+        refreshMode: .standard,
         cryptoCurrency: "usd",
         priceAlerts: [:]
     )
 
     enum CodingKeys: String, CodingKey {
-        case portfolios, activePortfolioID
-        case symbols, coins, holdings, cash, scrollSpeed, coloredTicker, refreshInterval
+        case portfolios, activePortfolioID, combinedPortfolioEnabled, lastIndividualPortfolioID, combinedPortfolioHistoryID
+        case symbols, coins, holdings, cash, scrollSpeed, coloredTicker, refreshInterval, refreshMode
         case tickerWidth, cryptoCurrency, showVolume, showSparklines, showExtendedHours
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
@@ -574,6 +610,7 @@ struct StockTickerConfig: Codable, Equatable {
          showMarketCap: Bool = true,
          showDayRange: Bool = true, showPERatio: Bool = false,
          sortMode: TickerSortMode = .manual, refreshInterval: TimeInterval = 5,
+         refreshMode: StockTickerRefreshMode = .standard,
          cryptoCurrency: String = "usd", priceAlerts: [String: Double] = [:]) {
         self.symbols = symbols; self.coins = coins
         let initial = Portfolio(name: Portfolio.fallbackName, holdings: holdings, cash: cash)
@@ -586,7 +623,7 @@ struct StockTickerConfig: Codable, Equatable {
         self.showVolume = showVolume; self.showSparklines = showSparklines
         self.showMarketCap = showMarketCap
         self.showDayRange = showDayRange; self.showPERatio = showPERatio
-        self.sortMode = sortMode; self.refreshInterval = refreshInterval
+        self.sortMode = sortMode; self.refreshInterval = refreshInterval; self.refreshMode = refreshMode
         self.cryptoCurrency = cryptoCurrency; self.priceAlerts = priceAlerts
     }
 
@@ -599,6 +636,9 @@ struct StockTickerConfig: Codable, Equatable {
         let legacyHoldings = try c.decodeIfPresent([String: Double].self, forKey: .holdings) ?? [:]
         let legacyCash = try c.decodeIfPresent(Double.self, forKey: .cash) ?? 0
         let stored = try c.decodeIfPresent([Portfolio].self, forKey: .portfolios) ?? []
+        combinedPortfolioEnabled = try c.decodeIfPresent(Bool.self, forKey: .combinedPortfolioEnabled) ?? false
+        lastIndividualPortfolioID = try c.decodeIfPresent(String.self, forKey: .lastIndividualPortfolioID)
+        combinedPortfolioHistoryID = try c.decodeIfPresent(String.self, forKey: .combinedPortfolioHistoryID) ?? UUID().uuidString
 
         if stored.isEmpty {
             let migrated = Portfolio(name: Portfolio.fallbackName,
@@ -609,7 +649,8 @@ struct StockTickerConfig: Codable, Equatable {
         } else {
             portfolios = stored
             let savedID = try c.decodeIfPresent(String.self, forKey: .activePortfolioID)
-            activePortfolioID = stored.contains { $0.id == savedID } ? savedID! : stored[0].id
+            activePortfolioID = (combinedPortfolioEnabled && savedID == Portfolio.combinedID)
+                ? Portfolio.combinedID : (stored.contains { $0.id == savedID } ? savedID! : stored[0].id)
         }
         displayMode = try c.decodeIfPresent(TickerDisplayMode.self, forKey: .displayMode) ?? .scrolling
         colorMode = try c.decodeIfPresent(TickerColorMode.self, forKey: .colorMode) ?? .dynamic
@@ -626,6 +667,7 @@ struct StockTickerConfig: Codable, Equatable {
         showPERatio = try c.decodeIfPresent(Bool.self, forKey: .showPERatio) ?? false
         sortMode = try c.decodeIfPresent(TickerSortMode.self, forKey: .sortMode) ?? .manual
         refreshInterval = try c.decodeIfPresent(TimeInterval.self, forKey: .refreshInterval) ?? 5
+        refreshMode = try c.decodeIfPresent(StockTickerRefreshMode.self, forKey: .refreshMode) ?? .standard
         cryptoCurrency = try c.decodeIfPresent(String.self, forKey: .cryptoCurrency) ?? "usd"
         priceAlerts = try c.decodeIfPresent([String: Double].self, forKey: .priceAlerts) ?? [:]
         historyRange = try c.decodeIfPresent(PortfolioHistoryService.Range.self, forKey: .historyRange) ?? .month
@@ -638,6 +680,9 @@ struct StockTickerConfig: Codable, Equatable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(portfolios, forKey: .portfolios)
         try c.encode(activePortfolioID, forKey: .activePortfolioID)
+        try c.encode(combinedPortfolioEnabled, forKey: .combinedPortfolioEnabled)
+        try c.encodeIfPresent(lastIndividualPortfolioID, forKey: .lastIndividualPortfolioID)
+        try c.encode(combinedPortfolioHistoryID, forKey: .combinedPortfolioHistoryID)
 
         // Also written flat so an older build still finds the active portfolio
         // instead of falling back to an empty one.
@@ -661,6 +706,7 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(showPERatio, forKey: .showPERatio)
         try c.encode(sortMode, forKey: .sortMode)
         try c.encode(refreshInterval, forKey: .refreshInterval)
+        try c.encode(refreshMode, forKey: .refreshMode)
         try c.encode(cryptoCurrency, forKey: .cryptoCurrency)
         try c.encode(priceAlerts, forKey: .priceAlerts)
         try c.encode(historyRange, forKey: .historyRange)
@@ -715,6 +761,17 @@ class StockTickerWidget: BaristaWidget {
     var config: StockTickerConfig
     var onDisplayUpdate: (() -> Void)?
     var refreshInterval: TimeInterval? { effectiveRefreshInterval }
+    var refreshModeSummary: String {
+        let policy = StockTickerRefreshPolicy.summary(for: config.refreshMode, currency: config.cryptoCurrency,
+                                                      configuredInterval: config.refreshInterval)
+        guard config.refreshMode == .ultraFast,
+              !StockTickerRefreshPolicy.streamPairs(coins: config.coins, currency: config.cryptoCurrency).isEmpty else {
+            return policy
+        }
+        return policy + (cryptoStream?.isConnected == true
+            ? " · Kraken stream connected"
+            : " · Kraken stream connecting/retrying; REST fallback every 15s")
+    }
 
     private(set) var quotes: [MarketQuote] = []
     private(set) var indexQuotes: [MarketQuote] = []
@@ -724,9 +781,18 @@ class StockTickerWidget: BaristaWidget {
     private(set) var isUsingCachedData = false
     private var timer: Timer?
     private var currentTimerInterval: TimeInterval = 0
+    private var detailLeaseCount = 0
     fileprivate var focusedIndex: Int = 0
     fileprivate var popoverVC: MarketPopoverController?
     private var previousPrices: [String: Double] = [:]
+    private var inFlightStocks: Set<String> = []
+    private var inFlightIndexes: Set<String> = []
+    private var inFlightCrypto = false
+    private var cryptoStream: KrakenTickerStream?
+    private var isRunning = false
+    private var lifecycleGeneration = 0
+    private var lastStreamUpdateByCoin: [String: Date] = [:]
+    private var lastStreamCacheWrite = Date.distantPast
 
     private let notificationsEnabled: Bool
     private let researchOpener: () -> Void
@@ -746,6 +812,22 @@ class StockTickerWidget: BaristaWidget {
     }
 
     var onDataRefresh: (() -> Void)?
+    static let dataDidChange = Notification.Name("MarketQuotesDidChange")
+    private var dataNotificationPending = false
+    private var cacheWrite: DispatchWorkItem?
+
+    /// Multiple windows can follow quotes without replacing each other's callback.
+    /// Batch sibling responses into one UI notification in the next run-loop turn.
+    private func notifyDataRefresh() {
+        onDataRefresh?()
+        guard !dataNotificationPending else { return }
+        dataNotificationPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.dataNotificationPending = false
+            NotificationCenter.default.post(name: Self.dataDidChange, object: self)
+        }
+    }
 
     private static let indexSymbols = ["SPY", "QQQ", "DIA"]
     private static let quoteCacheKey = "barista.stockTicker.lastGoodQuotes"
@@ -753,7 +835,8 @@ class StockTickerWidget: BaristaWidget {
 
     /// The configured rate, before market hours or backoff are taken into account.
     private var baseRefreshInterval: TimeInterval {
-        dashboardLeaseUntil > Date() ? 2 : max(2, min(config.refreshInterval, Self.turboRefreshInterval))
+        if config.refreshMode == .ultraFast { return StockTickerRefreshPolicy.fastestEquityPoll }
+        return dashboardLeaseUntil > Date() ? 2 : max(2, config.refreshInterval)
     }
 
     /// How often equities are worth re-fetching. Prices only move while the
@@ -767,16 +850,137 @@ class StockTickerWidget: BaristaWidget {
     /// other than the one the clock happens to be in.
     func stockInterval(during status: MarketStatus) -> TimeInterval {
         let base = baseRefreshInterval
+        // Preserve the detail view's existing fast quote cadence through the
+        // canonical poller, instead of starting a second full-fetch timer.
+        if detailLeaseCount > 0 { return base }
         switch status {
         case .open:                   return base
-        case .preMarket, .afterHours: return max(base * 3, 15)
+        case .preMarket, .afterHours: return config.refreshMode == .ultraFast ? max(base * 3, 6) : max(base * 3, 15)
         case .closed:                 return max(base * 12, 300)
         }
     }
 
     /// Crypto trades around the clock, so it never gets the closed-market slowdown.
     private var cryptoRefreshInterval: TimeInterval {
-        max(baseRefreshInterval, 10)
+        if config.refreshMode == .ultraFast,
+           !StockTickerRefreshPolicy.streamPairs(coins: config.coins, currency: config.cryptoCurrency).isEmpty {
+            let fallback = cryptoStream?.isConnected == true
+                ? StockTickerRefreshPolicy.ultraFastCryptoFallbackPoll : 15
+            return max(baseRefreshInterval, fallback)
+        }
+        return max(baseRefreshInterval, 15)
+    }
+
+    func beginDetailUpdates() {
+        detailLeaseCount += 1
+        if timer != nil { rescheduleRefreshTimerIfNeeded() }
+    }
+
+    func endDetailUpdates() {
+        detailLeaseCount = max(0, detailLeaseCount - 1)
+        if timer != nil { rescheduleRefreshTimerIfNeeded() }
+    }
+
+    /// Switches between the conservative public polling schedule and the
+    /// fastest practical free feed. Stocks remain polled; supported USD crypto
+    /// gets a public push stream without credentials.
+    func setRefreshMode(_ mode: StockTickerRefreshMode) {
+        guard config.refreshMode != mode else { return }
+        config.refreshMode = mode
+        refreshCryptoStream()
+        saveConfig()
+        if isRunning {
+            rescheduleRefreshTimerIfNeeded()
+            fetchAll(force: true)
+        }
+        onDisplayUpdate?()
+        notifyDataRefresh()
+    }
+
+    private func refreshCryptoStream() {
+        guard isRunning, config.refreshMode == .ultraFast else {
+            cryptoStream?.stop()
+            cryptoStream = nil
+            return
+        }
+        let pairs = StockTickerRefreshPolicy.streamPairs(coins: config.coins, currency: config.cryptoCurrency)
+        guard !pairs.isEmpty else {
+            cryptoStream?.stop()
+            cryptoStream = nil
+            return
+        }
+        if let cryptoStream {
+            cryptoStream.setPairs(pairs)
+        } else {
+            let generation = lifecycleGeneration
+            let stream = KrakenTickerStream(pairs: pairs) { [weak self] update in
+                DispatchQueue.main.async { self?.applyStreamUpdate(update, generation: generation) }
+            } onConnectionChange: { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self, self.isRunning, self.lifecycleGeneration == generation else { return }
+                    self.onDisplayUpdate?()
+                    self.notifyDataRefresh()
+                }
+            }
+            cryptoStream = stream
+            stream.start()
+        }
+    }
+
+    private func applyStreamUpdate(_ update: KrakenTickerUpdate, generation: Int) {
+        guard isRunning, lifecycleGeneration == generation,
+              config.refreshMode == .ultraFast, config.cryptoCurrency.caseInsensitiveCompare("usd") == .orderedSame,
+              config.coins.contains(update.coinID),
+              update.price.isFinite, update.price > 0 else { return }
+        let now = Date()
+        lastStreamUpdateByCoin[update.coinID] = now
+        // This timestamp means the latest response, not that every source is
+        // current. Mixed feeds keep their REST failure/cache flags below.
+        lastUpdated = now
+        if let index = quotes.firstIndex(where: { $0.kind == .crypto && $0.symbol == update.symbol }) {
+            var quote = quotes[index]
+            quote.price = update.price
+            quote.change = update.changePercent
+            quote.currency = "USD"
+            quote.receivedAt = now.timeIntervalSince1970
+            quote.source = "Kraken"
+            quote.dayHigh = update.high ?? quote.dayHigh
+            quote.dayLow = update.low ?? quote.dayLow
+            quote.volume = nil
+            quote.sparkline.append(update.price)
+            quote.sparklineTimes = []
+            if quote.sparkline.count > MarketQuote.rowChartResolution {
+                let dropCount = quote.sparkline.count - MarketQuote.rowChartResolution
+                quote.sparkline.removeFirst(dropCount)
+            }
+            quotes[index] = quote
+        } else {
+            quotes.append(MarketQuote(symbol: update.symbol, price: update.price,
+                                      change: update.changePercent, kind: .crypto,
+                                      currency: "USD", receivedAt: now.timeIntervalSince1970,
+                                      source: "Kraken",
+                                      dayHigh: update.high, dayLow: update.low,
+                                      volume: nil, sparkline: [update.price],
+                                      sparklineTimes: [now.timeIntervalSince1970]))
+        }
+        if config.symbols.isEmpty, config.coins.allSatisfy({ coinID in
+            let symbol = coinSymbols[coinID] ?? String(coinID.prefix(4)).uppercased()
+            return quotes.contains { quote in
+                quote.kind == .crypto && quote.symbol == symbol
+                    && quote.receivedAt.map { now.timeIntervalSince1970 - $0 < 60 } == true
+            }
+        }) {
+            lastSuccessfulFetch = now
+            lastFetchFailed = false
+            isUsingCachedData = false
+        }
+        checkPriceAlert(symbol: update.symbol, newPrice: update.price)
+        if now.timeIntervalSince(lastStreamCacheWrite) >= 15 {
+            lastStreamCacheWrite = now
+            saveQuoteCache()
+        }
+        onDisplayUpdate?()
+        notifyDataRefresh()
     }
 
     /// Timer cadence: the faster of the two, since each fetch decides for itself
@@ -815,8 +1019,19 @@ class StockTickerWidget: BaristaWidget {
     /// True once data is older than several refresh cycles, so the UI can stop
     /// presenting stale prices as if they were live.
     var isDataStale: Bool {
-        guard let dataAge else { return false }
-        return dataAge > max(effectiveRefreshInterval * 4, 90)
+        let watched = quotes.filter { quote in
+            quote.kind == .stock ? config.symbols.contains(quote.symbol)
+                : config.coins.contains(where: { (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == quote.symbol })
+        }
+        guard !watched.isEmpty else {
+            guard let dataAge else { return false }
+            return dataAge > max(effectiveRefreshInterval * 4, 90)
+        }
+        return watched.contains { quote in
+            guard let receivedAt = quote.receivedAt else { return true }
+            let interval = quote.kind == .stock ? stockRefreshInterval : cryptoRefreshInterval
+            return Date().timeIntervalSince1970 - receivedAt > max(interval * 4, 90)
+        }
     }
 
     private func noteFetchSuccess() {
@@ -827,7 +1042,6 @@ class StockTickerWidget: BaristaWidget {
             rateLimitedHost = nil
         }
         lastSuccessfulFetch = Date()
-        recordPortfolioHistory()
     }
 
     /// Snapshots every portfolio's value, not just the active one, so switching
@@ -840,6 +1054,12 @@ class StockTickerWidget: BaristaWidget {
                 PortfolioHistoryService.shared.record(portfolioID: portfolio.id, value: snapshot.total)
             }
         }
+        if config.combinedPortfolioEnabled {
+            config.activePortfolioID = Portfolio.combinedID
+            if let snapshot = portfolioSnapshot() {
+                PortfolioHistoryService.shared.record(portfolioID: config.combinedPortfolioHistoryID, value: snapshot.total)
+            }
+        }
         config.activePortfolioID = saved
     }
 
@@ -848,7 +1068,9 @@ class StockTickerWidget: BaristaWidget {
         guard let http = error as? DataFetcher.HTTPError, http.isRateLimited else { return }
         consecutiveRateLimits += 1
         rateLimitedHost = http.host
-        let delay = min(30 * pow(2, Double(consecutiveRateLimits - 1)), 600)
+        let exponential = 30 * pow(2, Double(consecutiveRateLimits - 1))
+        let providerDelay = http.retryAfter ?? 0
+        let delay = min(max(exponential, providerDelay), 600)
         backoffUntil = Date().addingTimeInterval(delay)
     }
 
@@ -865,8 +1087,10 @@ class StockTickerWidget: BaristaWidget {
     }
 
     init(config: StockTickerConfig, notificationsEnabled: Bool,
+         initialQuotes: [MarketQuote] = [],
          researchOpener: @escaping () -> Void = ResearchWorkspaceLauncher.open) {
         self.config = config
+        self.quotes = initialQuotes
         self.notificationsEnabled = notificationsEnabled
         self.researchOpener = researchOpener
         if notificationsEnabled {
@@ -886,6 +1110,8 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func start() {
+        isRunning = true
+        lifecycleGeneration += 1
         currentTimerInterval = effectiveRefreshInterval
         // Portfolios saved before the ledger existed get one seeded at decode.
         // Write it back once so the migration is permanent rather than redone on
@@ -901,11 +1127,11 @@ class StockTickerWidget: BaristaWidget {
         // Earnings dates change daily at most, and the service throttles itself.
         EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
             self?.onDisplayUpdate?()
-            self?.onDataRefresh?()
+            self?.notifyDataRefresh()
             self?.checkEarningsAlerts()
         }
         if config.compareToBenchmark {
-            BenchmarkSeries.shared.refreshIfNeeded { [weak self] in self?.onDataRefresh?() }
+            BenchmarkSeries.shared.refreshIfNeeded { [weak self] in self?.notifyDataRefresh() }
         }
         timer = Timer.scheduledTimer(withTimeInterval: currentTimerInterval, repeats: true) { [weak self] _ in
             self?.tick()
@@ -913,9 +1139,24 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func stop() {
+        isRunning = false
+        lifecycleGeneration += 1
+        detailLeaseCount = 0
         dashboardLeaseUntil = .distantPast
         timer?.invalidate()
         timer = nil
+        cryptoStream?.stop()
+        cryptoStream = nil
+        inFlightStocks.removeAll()
+        inFlightIndexes.removeAll()
+        inFlightCrypto = false
+        lastStreamUpdateByCoin.removeAll()
+        if let cacheWrite {
+            cacheWrite.cancel()
+            self.cacheWrite = nil
+            recordPortfolioHistory()
+            persistQuoteCache()
+        }
     }
 
     private func tick() {
@@ -924,7 +1165,7 @@ class StockTickerWidget: BaristaWidget {
         // The service self-throttles to a 6 hour cadence; without this the
         // calendar was only ever loaded once, at launch.
         EarningsCalendarService.shared.refreshIfNeeded { [weak self] in
-            self?.onDataRefresh?()
+            self?.notifyDataRefresh()
         }
         checkEarningsAlerts()
     }
@@ -1175,10 +1416,21 @@ class StockTickerWidget: BaristaWidget {
         lastUpdated = payload.lastUpdated
         isUsingCachedData = true
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
     }
 
     private func saveQuoteCache() {
+        guard cacheWrite == nil else { return }
+        let write = DispatchWorkItem { [weak self] in
+            self?.cacheWrite = nil
+            self?.recordPortfolioHistory()
+            self?.persistQuoteCache()
+        }
+        cacheWrite = write
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: write)
+    }
+
+    private func persistQuoteCache() {
         guard !quotes.isEmpty || !indexQuotes.isEmpty else { return }
         let payload = QuoteCachePayload(
             quotes: quotes,
@@ -1261,61 +1513,81 @@ class StockTickerWidget: BaristaWidget {
     private var lastCryptoFetch: Date?
 
     private func fetchAll(force: Bool = false) {
-        // While an endpoint is throttling us, only an explicit refresh gets through.
-        guard force || !isBackingOff else { return }
+        // A user refresh also respects the provider's active cooldown.
+        guard !isBackingOff else { return }
+        refreshCryptoStream()
 
         let now = Date()
         let stocksDue = force || lastStockFetch.map { now.timeIntervalSince($0) >= stockRefreshInterval } ?? true
-        let cryptoDue = force || lastCryptoFetch.map { now.timeIntervalSince($0) >= cryptoRefreshInterval } ?? true
+        let cryptoDue = lastCryptoFetch.map { now.timeIntervalSince($0) >= cryptoRefreshInterval } ?? true
+        let streamableIDs = config.refreshMode == .ultraFast
+            ? Set(StockTickerRefreshPolicy.streamPairs(coins: config.coins, currency: config.cryptoCurrency)
+                .compactMap(StockTickerRefreshPolicy.coinID(forPair:)))
+            : Set<String>()
+        let recentlyStreamedIDs = StockTickerRefreshPolicy.recentlyStreamedCoinIDs(
+            streamableIDs, receivedAt: lastStreamUpdateByCoin, now: now
+        )
+        let restCryptoIDs = config.coins.filter { !recentlyStreamedIDs.contains($0) }
 
         if stocksDue {
             lastStockFetch = now
             for s in config.symbols { fetchStock(symbol: s, force: force) }
             for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
         }
-        if cryptoDue, !config.coins.isEmpty {
+        if cryptoDue, !restCryptoIDs.isEmpty {
             lastCryptoFetch = now
-            fetchCrypto(force: force)
+            fetchCrypto(coins: restCryptoIDs, force: force)
         }
     }
 
     private func fetchStock(symbol: String, force: Bool = false) {
+        guard isRunning, !isBackingOff, !inFlightStocks.contains(symbol) else { return }
         let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
+        let requestGeneration = lifecycleGeneration
+        inFlightStocks.insert(symbol)
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
+            guard self.isRunning, self.lifecycleGeneration == requestGeneration else { return }
             switch result {
             case .success(let data):
-                self.parseStock(data: data, symbol: symbol, isIndex: false)
+                DispatchQueue.main.async { self.inFlightStocks.remove(symbol) }
+                self.parseStock(data: data, symbol: symbol, isIndex: false, generation: requestGeneration)
             case .failure(let error):
                 DispatchQueue.main.async {
+                    self.inFlightStocks.remove(symbol)
                     self.noteFetchFailure(error)
                     // A throttled host is a whole-feed problem, not a bad ticker,
                     // so don't brand the symbol as failed for it.
                     if !self.isBackingOff { self.failedSymbols.insert(symbol) }
                     self.lastFetchFailed = true
                     self.onDisplayUpdate?()
-                    self.onDataRefresh?()
+                    self.notifyDataRefresh()
                 }
             }
         }
     }
 
     private func fetchIndex(symbol: String, force: Bool = false) {
+        guard isRunning, !isBackingOff, !inFlightIndexes.contains(symbol) else { return }
         let safe = symbol.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? symbol
         guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1m&range=1d&includePrePost=true") else { return }
+        let requestGeneration = lifecycleGeneration
+        inFlightIndexes.insert(symbol)
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
+            guard self.isRunning, self.lifecycleGeneration == requestGeneration else { return }
             switch result {
             case .success(let data):
-                self.parseStock(data: data, symbol: symbol, isIndex: true)
+                DispatchQueue.main.async { self.inFlightIndexes.remove(symbol) }
+                self.parseStock(data: data, symbol: symbol, isIndex: true, generation: requestGeneration)
             case .failure(let error):
-                DispatchQueue.main.async { self.noteFetchFailure(error) }
+                DispatchQueue.main.async { self.inFlightIndexes.remove(symbol); self.noteFetchFailure(error) }
             }
         }
     }
 
-    private func parseStock(data: Data, symbol: String, isIndex: Bool) {
+    private func parseStock(data: Data, symbol: String, isIndex: Bool, generation: Int) {
         do {
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let chart = json["chart"] as? [String: Any],
@@ -1323,9 +1595,10 @@ class StockTickerWidget: BaristaWidget {
                   let first = results.first,
                   let meta = first["meta"] as? [String: Any] else {
                 DispatchQueue.main.async {
+                    guard self.isRunning, self.lifecycleGeneration == generation else { return }
                     self.failedSymbols.insert(symbol)
                     self.lastFetchFailed = true
-                    self.onDataRefresh?()
+                    self.notifyDataRefresh()
                 }
                 return
             }
@@ -1359,9 +1632,10 @@ class StockTickerWidget: BaristaWidget {
                 ?? marketDouble(meta["regularMarketPreviousClose"])
             guard let prev = previousClose else {
                 DispatchQueue.main.async {
+                    guard self.isRunning, self.lifecycleGeneration == generation else { return }
                     self.failedSymbols.insert(symbol)
                     self.lastFetchFailed = true
-                    self.onDataRefresh?()
+                    self.notifyDataRefresh()
                 }
                 return
             }
@@ -1480,12 +1754,14 @@ class StockTickerWidget: BaristaWidget {
                                 marketState: marketState)
             q.currency = meta["currency"] as? String
             q.receivedAt = Date().timeIntervalSince1970
+            q.source = "Yahoo Finance"
             q.regularStart = Double(regularStart)
             q.regularEnd = Double(regularEnd)
             q.sparklineTimes = sparkTimes.count == sparkline.count ? sparkTimes : []
             q.minuteCloses = fullCloses
             q.minuteTimes = fullTimes
             DispatchQueue.main.async {
+                guard self.isRunning, self.lifecycleGeneration == generation else { return }
                 guard isIndex || self.config.symbols.contains(symbol) else { return }
                 self.failedSymbols.remove(symbol)
                 self.lastFetchFailed = false
@@ -1511,42 +1787,56 @@ class StockTickerWidget: BaristaWidget {
                 self.noteFetchSuccess()
                 self.saveQuoteCache()
                 self.onDisplayUpdate?()
-                self.onDataRefresh?()
+                self.notifyDataRefresh()
             }
         } catch {
             DispatchQueue.main.async {
+                guard self.isRunning, self.lifecycleGeneration == generation else { return }
                 self.failedSymbols.insert(symbol)
                 self.lastFetchFailed = true
-                self.onDataRefresh?()
+                self.notifyDataRefresh()
             }
         }
     }
 
-    private func fetchCrypto(force: Bool = false) {
-        let ids = config.coins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+    private func fetchCrypto(coins: [String]? = nil, force: Bool = false) {
+        guard isRunning, !isBackingOff, !inFlightCrypto else { return }
+        let requestedCoins = coins ?? config.coins
+        guard !requestedCoins.isEmpty else { return }
+        let ids = requestedCoins.joined(separator: ",").addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let url = URL(string: "https://api.coingecko.com/api/v3/coins/markets?vs_currency=\(config.cryptoCurrency)&ids=\(ids)&sparkline=true&price_change_percentage=24h") else { return }
+        let requestStartedAt = Date()
+        let requestGeneration = lifecycleGeneration
+        let requestCurrency = config.cryptoCurrency
+        inFlightCrypto = true
         DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : cryptoCacheAge, allowStaleCache: false) { [weak self] result in
             guard let self = self else { return }
+            guard self.isRunning, self.lifecycleGeneration == requestGeneration else { return }
             switch result {
             case .success(let data):
-                self.parseCrypto(data: data)
+                DispatchQueue.main.async { self.inFlightCrypto = false }
+                self.parseCrypto(data: data, requestedCoins: Set(requestedCoins),
+                                 requestStartedAt: requestStartedAt, generation: requestGeneration,
+                                 currency: requestCurrency)
             case .failure(let error):
                 DispatchQueue.main.async {
+                    self.inFlightCrypto = false
                     self.noteFetchFailure(error)
                     self.lastFetchFailed = true
-                    self.onDataRefresh?()
+                    self.notifyDataRefresh()
                     if self.quotes.isEmpty { self.onDisplayUpdate?() }
                 }
             }
         }
     }
 
-    private func parseCrypto(data: Data) {
+    private func parseCrypto(data: Data, requestedCoins: Set<String>, requestStartedAt: Date,
+                             generation: Int, currency: String) {
         do {
             guard let arr = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
             var results: [MarketQuote] = []
             for cd in arr {
-                guard let coinId = cd["id"] as? String else { continue }
+                guard let coinId = cd["id"] as? String, requestedCoins.contains(coinId) else { continue }
                 let sym = coinSymbols[coinId] ?? String(coinId.prefix(4)).uppercased()
                 let currentPrice = cd["current_price"] as? Double ?? 0
                 var sparkline: [Double] = []
@@ -1561,26 +1851,50 @@ class StockTickerWidget: BaristaWidget {
                     dayHigh: cd["high_24h"] as? Double, dayLow: cd["low_24h"] as? Double,
                     volume: cd["total_volume"] as? Double, sparkline: sparkline,
                     marketCap: cd["market_cap"] as? Double))
-                results[results.count - 1].currency = self.config.cryptoCurrency.uppercased()
+                results[results.count - 1].currency = currency.uppercased()
                 results[results.count - 1].receivedAt = Date().timeIntervalSince1970
+                results[results.count - 1].source = "CoinGecko"
             }
             DispatchQueue.main.async {
-                for q in results { self.checkPriceAlert(symbol: q.symbol, newPrice: q.price) }
+                guard self.isRunning, self.lifecycleGeneration == generation,
+                      self.config.cryptoCurrency.caseInsensitiveCompare(currency) == .orderedSame else { return }
+                let usableResults = results.filter { quote in
+                    guard let coinID = requestedCoins.first(where: {
+                        (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == quote.symbol
+                    }), self.config.coins.contains(coinID) else { return false }
+                    return StockTickerRefreshPolicy.shouldApplyRESTUpdate(
+                        requestStartedAt: requestStartedAt,
+                        lastStreamReceivedAt: self.lastStreamUpdateByCoin[coinID]
+                    )
+                }
+                guard !usableResults.isEmpty else { return }
+                for q in usableResults { self.checkPriceAlert(symbol: q.symbol, newPrice: q.price) }
                 self.lastFetchFailed = false
                 self.isUsingCachedData = false
-                self.quotes.removeAll { $0.kind == .crypto }
-                self.quotes.append(contentsOf: results)
-                for q in results { self.previousPrices[q.symbol] = q.price }
+                let updatedIDs = Set(usableResults.compactMap { quote in
+                    requestedCoins.first(where: {
+                        (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == quote.symbol
+                    })
+                })
+                self.quotes.removeAll { quote in
+                    guard quote.kind == .crypto else { return false }
+                    let coinID = requestedCoins.first(where: {
+                        (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == quote.symbol
+                    })
+                    return coinID.map(updatedIDs.contains) ?? false
+                }
+                self.quotes.append(contentsOf: usableResults)
+                for q in usableResults { self.previousPrices[q.symbol] = q.price }
                 self.lastUpdated = Date()
                 self.noteFetchSuccess()
                 self.saveQuoteCache()
                 self.onDisplayUpdate?()
-                self.onDataRefresh?()
+                self.notifyDataRefresh()
             }
         } catch {
             DispatchQueue.main.async {
                 self.lastFetchFailed = true
-                self.onDataRefresh?()
+                self.notifyDataRefresh()
             }
         }
     }
@@ -1754,7 +2068,7 @@ class StockTickerWidget: BaristaWidget {
         config.symbols.append(upper)
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
         fetchStock(symbol: upper, force: true)
     }
 
@@ -1764,7 +2078,7 @@ class StockTickerWidget: BaristaWidget {
         config.coins.append(coin)
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
         fetchCrypto(force: true)
     }
 
@@ -1783,13 +2097,14 @@ class StockTickerWidget: BaristaWidget {
             quotes.removeAll { $0.symbol == symbol && $0.kind == .crypto }
         }
         saveConfig()
-        DispatchQueue.main.async { self.onDisplayUpdate?(); self.onDataRefresh?() }
+        DispatchQueue.main.async { self.onDisplayUpdate?(); self.notifyDataRefresh() }
     }
 
     /// Sets share count and, optionally, the average price paid.
     /// Pass `averageCost: nil` to leave any existing cost untouched; pass 0 to clear it.
     func setHolding(symbol: String, kind: MarketQuote.Kind, quantity rawQuantity: Double,
                     averageCost rawCost: Double? = nil) {
+        guard !config.isCombinedPortfolioActive else { return }
         let normalized = symbol.uppercased()
         let quantity = rawQuantity.isFinite ? max(0, rawQuantity) : 0
         let cost = rawCost.flatMap { $0.isFinite ? max(0, $0) : nil }
@@ -1802,14 +2117,45 @@ class StockTickerWidget: BaristaWidget {
         }
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
         if quantity > 0 {
             refreshQuoteNow(symbol: normalized, kind: kind)
         }
     }
 
-    /// Logs a buy or a sell. Share count, average cost and realised profit all
-    /// fall out of the ledger, so nothing else needs updating.
+    func tradeValidationProblem(symbol: String, kind: MarketQuote.Kind, side: Transaction.Kind,
+                                quantity: Double, price: Double, allowCashOverdraft: Bool = false) -> String? {
+        guard !config.isCombinedPortfolioActive else {
+            return "Choose an individual portfolio to record a trade. All Portfolios updates automatically."
+        }
+        let normalized = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalized.isEmpty, side == .buy || side == .sell,
+              quantity.isFinite, quantity > 0, price.isFinite, price > 0,
+              (quantity * price).isFinite else { return "Enter a valid symbol, positive quantity and price." }
+        let quoteCurrency = quotes.first { $0.symbol == normalized && $0.kind == kind }?.currency
+            ?? (kind == .crypto ? config.cryptoCurrency : "usd")
+        guard quoteCurrency.uppercased() == "USD" else {
+            return "Portfolio cash is in USD. Trades quoted in \(quoteCurrency.uppercased()) require currency conversion, which is not available."
+        }
+        if side == .sell, (config.holdings[normalized] ?? 0) < quantity {
+            return "You hold \(formatShareCount(config.holdings[normalized] ?? 0)) of \(normalized). A sale cannot exceed your position."
+        }
+        let amount = quantity * price
+        guard config.cash.isFinite, (config.cash + (side == .buy ? -amount : amount)).isFinite else {
+            return "The resulting cash balance is outside the supported range."
+        }
+        if side == .buy, !allowCashOverdraft, buyRequiresCashOverride(quantity: quantity, price: price) {
+            return "This purchase costs \(formatCurrency(amount)). Current cash is \(formatCurrency(config.cash)). Confirm the cash shortfall to record this buy with a negative cash balance."
+        }
+        return nil
+    }
+
+    func buyRequiresCashOverride(quantity: Double, price: Double) -> Bool {
+        let amount = quantity * price
+        return config.cash < 0 || amount > config.cash + max(amount.ulp, config.cash.ulp) * 4
+    }
+
+    /// Logs a buy or sell and transfers its consideration to/from current cash.
     @discardableResult
     func recordTrade(symbol: String,
                      kind: MarketQuote.Kind,
@@ -1817,39 +2163,44 @@ class StockTickerWidget: BaristaWidget {
                      quantity: Double,
                      price: Double,
                      date: Date = Date(),
-                     note: String? = nil) -> Bool {
-        let normalized = symbol.uppercased()
-        guard quantity.isFinite, quantity > 0, price.isFinite, price >= 0 else { return false }
-        // Selling what you do not hold is a typo, not a short position; the
-        // ledger would clamp it silently, so refuse it where the user can see.
-        if side == .sell, (config.holdings[normalized] ?? 0) < quantity { return false }
+                     note: String? = nil,
+                     allowCashOverdraft: Bool = false) -> Bool {
+        let normalized = symbol.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard tradeValidationProblem(symbol: normalized, kind: kind, side: side,
+                                     quantity: quantity, price: price, allowCashOverdraft: allowCashOverdraft) == nil else { return false }
 
-        config.record(Transaction(date: date, symbol: normalized, kind: side,
-                                  quantity: quantity, price: price, note: note))
+        guard config.recordFundedTrade(Transaction(date: date, symbol: normalized, kind: side,
+                                                  quantity: quantity, price: price, note: note),
+                                       allowCashOverdraft: allowCashOverdraft) else { return false }
         if side == .buy, kind == .stock,
            !config.symbols.contains(normalized), !Self.indexSymbols.contains(normalized) {
             config.symbols.append(normalized)
         }
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
         if side == .buy { refreshQuoteNow(symbol: normalized, kind: kind) }
         return true
     }
 
     /// Removes a logged trade and rebuilds the derived numbers without it.
-    func deleteTrade(id: String) {
-        config.mutateActivePortfolio { $0.removeTransaction(id: id) }
+    @discardableResult
+    func deleteTrade(id: String) -> Bool {
+        var removed = false
+        config.mutateActivePortfolio { removed = $0.removeTransaction(id: id) }
+        guard removed else { return false }
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
+        return true
     }
 
     func setCash(_ rawAmount: Double) {
+        guard !config.isCombinedPortfolioActive else { return }
         config.cash = rawAmount.isFinite ? max(0, rawAmount) : 0
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
     }
 
     // MARK: - Intraday Portfolio Curve
@@ -1891,7 +2242,7 @@ class StockTickerWidget: BaristaWidget {
         let steps = max(1, Int((gridEnd - startMinute) / minute))
         guard steps >= 1 else { return nil }
 
-        let cashValue = max(0, config.cash)
+        let cashValue = config.cash
         var out: [(date: Date, value: Double)] = []
         out.reserveCapacity(steps + 1)
 
@@ -1961,15 +2312,33 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private func portfoliosChanged() {
+        recordPortfolioHistory()
         saveConfig()
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
     }
 
     func selectPortfolio(id: String) {
         guard id != config.activePortfolioID,
-              config.portfolios.contains(where: { $0.id == id }) else { return }
+              config.portfolioChoices.contains(where: { $0.id == id }) else { return }
+        if id == Portfolio.combinedID { config.lastIndividualPortfolioID = config.activePortfolioID }
         config.activePortfolioID = id
+        portfoliosChanged()
+    }
+
+    func setCombinedPortfolioEnabled(_ enabled: Bool) {
+        guard enabled != config.combinedPortfolioEnabled else { return }
+        if enabled {
+            config.lastIndividualPortfolioID = config.activePortfolioID
+            config.combinedPortfolioEnabled = true
+            config.activePortfolioID = Portfolio.combinedID
+        } else {
+            if config.isCombinedPortfolioActive {
+                config.activePortfolioID = config.portfolios.first { $0.id == config.lastIndividualPortfolioID }?.id
+                    ?? config.portfolios.first?.id ?? ""
+            }
+            config.combinedPortfolioEnabled = false
+        }
         portfoliosChanged()
     }
 
@@ -2018,15 +2387,15 @@ class StockTickerWidget: BaristaWidget {
 
     func refreshNow() {
         onDisplayUpdate?()
-        onDataRefresh?()
+        notifyDataRefresh()
         fetchAll(force: true)
     }
 
     // MARK: - Portfolio
 
     func portfolioSnapshot() -> PortfolioSnapshot? {
-        let cash = max(0, config.cash)
-        guard !config.holdings.isEmpty || cash > 0 else { return nil }
+        let cash = config.cash
+        guard !config.holdings.isEmpty || cash != 0 else { return nil }
         var positions: [PortfolioPosition] = []
         var missing: [String] = []
 
@@ -2044,7 +2413,7 @@ class StockTickerWidget: BaristaWidget {
         let total = positionsValue + cash
         let baselineTotal = positions.map(\.baselineValue).reduce(0, +) + cash
         let dailyPL = positions.map(\.dailyPL).reduce(0, +)
-        guard total > 0 else { return nil }
+        guard total.isFinite else { return nil }
         return PortfolioSnapshot(positions: positions, missingSymbols: missing, cash: cash, total: total, baselineTotal: baselineTotal, dailyPL: dailyPL)
     }
 
@@ -2121,12 +2490,17 @@ class StockTickerWidget: BaristaWidget {
         return String(format: "%.6f", price)
     }
 
+    private lazy var currencyFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.numberStyle = .currency
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }()
+
     func formatCurrency(_ amount: Double) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .currency
-        f.minimumFractionDigits = 2
-        f.maximumFractionDigits = 2
-        return f.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
+        currencyFormatter.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
     }
 
     func formatSignedCurrency(_ amount: Double) -> String {
@@ -2185,6 +2559,10 @@ extension StockTickerWidget: InteractiveDropdown {
 extension StockTickerWidget: DeclarativeConfig {
     func configFields() -> [ConfigField] {
         [
+            .section(title: "Portfolios"),
+            .toggle(label: "Show All Portfolios", key: "combinedPortfolioEnabled",
+                    get: { [weak self] in self?.config.combinedPortfolioEnabled ?? false },
+                    set: { [weak self] in self?.setCombinedPortfolioEnabled($0) }),
             .section(title: "Display"),
             .picker(label: "Display Mode", key: "displayMode", options: [
                 (title: "Scrolling Ticker", value: "scrolling"),

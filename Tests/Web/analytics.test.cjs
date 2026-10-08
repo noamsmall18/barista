@@ -10,6 +10,13 @@ test('allocation includes cash and calculates effective holdings independently',
   const e=A.exposure(snapshot());
   assert.equal(e.cashWeight,25);assert.equal(e.topThree,75);assert.equal(e.held[0].weight,50);assert.ok(Math.abs(e.effectivePositions-1.8)<1e-10);
 });
+test('borrowed cash remains a signed exposure against net portfolio value',()=>{
+  const s=snapshot();s.summary.liveTotal=1000;s.summary.cash=-500;
+  const e=A.exposure(s);
+  assert.equal(e.cashWeight,-50);
+  assert.equal(e.held[0].weight,100);
+  assert.equal(e.held[1].weight,50);
+});
 test('portfolio shock excludes cash and unheld securities',()=>{
   assert.deepEqual(A.scenario(snapshot(),-10),{exposed:1500,delta:-150,total:1850,percent:-7.5});
   assert.equal(A.scenario(snapshot(),10,'AAPL').delta,100);

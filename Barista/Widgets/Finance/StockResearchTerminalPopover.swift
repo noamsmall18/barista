@@ -2,6 +2,32 @@ import Cocoa
 
 // MARK: - Stock Research Terminal Popovers
 
+/// The native chart's statistics must describe the same series being drawn.
+/// A one-day move uses previous close; longer ranges use their first sample.
+struct TickerChartSummary {
+    let low: Double
+    let high: Double
+    let baseline: Double
+    let latest: Double
+    let count: Int
+    var percentChange: Double { baseline > 0 ? (latest - baseline) / baseline * 100 : 0 }
+
+    init(quote: MarketQuote, history: StockPriceHistory?) {
+        let series = (history?.points.map(\.close) ?? quote.chartSeries).filter { $0.isFinite && $0 > 0 }
+        low = series.min() ?? quote.currentPrice
+        high = series.max() ?? quote.currentPrice
+        if let history {
+            let previous = history.previousClose.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            baseline = (history.range == .oneDay ? previous : nil) ?? history.firstClose ?? quote.currentPrice
+            latest = history.latest?.close ?? quote.currentPrice
+        } else {
+            baseline = quote.chartBaseline ?? quote.baselinePrice ?? quote.currentPrice
+            latest = quote.currentPrice
+        }
+        count = series.count
+    }
+}
+
 private struct ResearchMetric {
     let id: String
     let label: String
@@ -15,12 +41,34 @@ private struct ResearchMetric {
 
 class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     private weak var widget: StockTickerWidget?
-    private let quote: MarketQuote
-    private let popoverW: CGFloat = 620
-    private let popoverH: CGFloat = 760
+    private(set) var quote: MarketQuote
+    private let presentationSize: NSSize
+    private let fetchesRemoteData: Bool
+    private var popoverW: CGFloat { presentationSize.width }
+    private var popoverH: CGFloat { presentationSize.height }
+    private var dataObserver: NSObjectProtocol?
+    private var hasDetailLease = false
+    private var headerHost: FlippedView?
+    private var overviewHost: FlippedView?
+    private var positionLabel: NSTextField?
+    private var positionEditButton: NSButton?
+    private var bodyScroll: NSScrollView?
+    private var section = 0
+    private var loadedFundamentals: StockFundamentals?
+    private var fundamentalsError: String?
+    private var newsLoaded = false
+    private var historyByRange: [StockChartRange: StockPriceHistory] = [:]
+
+    static func preferredSize(on screen: NSScreen?) -> NSSize {
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        return NSSize(width: min(620, max(320, visible.width - 32)),
+                      height: min(680, max(320, visible.height - 32)))
+    }
     private var newsContainer: NSView?
     private var secFundamentalsContainer: NSView?
     private var terminalChartView: TerminalStockChartView?
+    private var chartStatsHost: FlippedView?
+    private var chartStatusLabel: NSTextField?
     private var chartRangeButtons: [StockChartRange: NSButton] = [:]
     private var chartRange: StockChartRange = .oneDay
     private var newsItems: [(title: String, link: String)] = []
@@ -36,9 +84,12 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     private var currentLink = ""
     private var parsedNews: [(title: String, link: String)] = []
 
-    init(widget: StockTickerWidget, quote: MarketQuote) {
+    init(widget: StockTickerWidget, quote: MarketQuote, screen: NSScreen? = NSScreen.main,
+         fetchesRemoteData: Bool = true) {
         self.widget = widget
         self.quote = quote
+        self.presentationSize = Self.preferredSize(on: screen)
+        self.fetchesRemoteData = fetchesRemoteData
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -46,56 +97,234 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
 
     override func loadView() {
         view = buildView()
-        fetchNews()
-        fetchFundamentals()
         fetchPriceHistory(range: chartRange)
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if dataObserver == nil {
+            dataObserver = NotificationCenter.default.addObserver(
+                forName: StockTickerWidget.dataDidChange, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self, note.object as AnyObject? === self.widget else { return }
+                self.updateLiveQuote()
+            }
+        }
+        if !hasDetailLease {
+            widget?.beginDetailUpdates()
+            hasDetailLease = true
+        }
+        updateLiveQuote()
         startLiveRefreshTimer()
     }
 
-    deinit {
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        stopLiveUpdates()
+    }
+
+    private func stopLiveUpdates() {
+        if hasDetailLease {
+            widget?.endDetailUpdates()
+            hasDetailLease = false
+        }
         liveRefreshTimer?.invalidate()
+        liveRefreshTimer = nil
+        if let dataObserver { NotificationCenter.default.removeObserver(dataObserver) }
+        dataObserver = nil
+        metricPopover?.close()
+        fundamentalPopover?.close()
+    }
+
+    deinit { stopLiveUpdates() }
+
+    private func updateLiveQuote() {
+        if let latest = widget?.quotes.first(where: { $0.symbol == quote.symbol && $0.kind == quote.kind }) {
+            quote = latest
+        }
+        headerHost?.subviews.forEach { $0.removeFromSuperview() }
+        if let headerHost { _ = addHeader(to: headerHost, y: 0, pad: 16, cw: view.bounds.width - 32) }
+        terminalChartView?.update(quote: quote)
+        renderChartStats()
+        if let overviewHost {
+            overviewHost.subviews.forEach { $0.removeFromSuperview() }
+            _ = addSnapshot(to: overviewHost, y: 0, pad: 0, cw: overviewHost.bounds.width)
+        }
+        updatePositionLabel()
     }
 
     private func startLiveRefreshTimer() {
         liveRefreshTimer?.invalidate()
         liveRefreshTimer = Timer.scheduledTimer(withTimeInterval: StockTickerWidget.turboRefreshInterval, repeats: true) { [weak self] _ in
-            self?.refreshLiveData(forceChart: true)
+            guard let self, self.view.window?.isVisible == true, self.section == 0 else { return }
+            // The widget already polls quotes. Only request the visible chart,
+            // respecting the selected range's cache instead of forcing all symbols.
+            self.fetchPriceHistory(range: self.chartRange)
         }
     }
 
     private func buildView() -> NSView {
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: popoverW, height: popoverH))
+        let size = presentationSize
+        let root = FlippedView(frame: NSRect(origin: .zero, size: size))
+        root.wantsLayer = true
+        root.layer?.backgroundColor = NSColor(calibratedRed: 0.075, green: 0.085, blue: 0.105, alpha: 1).cgColor
+        root.appearance = NSAppearance(named: .darkAqua)
+        let header = FlippedView(frame: NSRect(x: 0, y: 12, width: size.width, height: 86))
+        header.autoresizingMask = [.width]
+        root.addSubview(header)
+        headerHost = header
+        _ = addHeader(to: header, y: 0, pad: 16, cw: size.width - 32)
+
+        let tabs = NSSegmentedControl(labels: ["Overview", "Financials", "Headlines"],
+                                      trackingMode: .selectOne, target: self, action: #selector(sectionChanged(_:)))
+        tabs.frame = NSRect(x: 16, y: 110, width: size.width - 32, height: 28)
+        tabs.autoresizingMask = [.width]
+        tabs.selectedSegment = section
+        root.addSubview(tabs)
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 150, width: size.width, height: size.height - 150))
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.scrollerStyle = .overlay
+        scroll.autoresizingMask = [.width, .height]
+        root.addSubview(scroll)
+        bodyScroll = scroll
+        buildBody()
+        return root
+    }
 
-        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: popoverW, height: 2400))
-        doc.wantsLayer = true
+    @objc private func sectionChanged(_ sender: NSSegmentedControl) {
+        section = sender.selectedSegment
+        buildBody()
+        if section == 0 { fetchPriceHistory(range: chartRange) }
+        if section == 1, loadedFundamentals == nil { fetchFundamentals() }
+        if section == 2, !newsLoaded { fetchNews() }
+    }
+
+    private func buildBody() {
+        guard let scroll = bodyScroll else { return }
+        metricPopover?.close()
+        fundamentalPopover?.close()
+        overviewHost = nil
+        positionLabel = nil
+        newsContainer = nil
+        secFundamentalsContainer = nil
+        terminalChartView = nil
+        chartStatsHost = nil
+        let width = scroll.bounds.width
+        let doc = FlippedView(frame: NSRect(x: 0, y: 0, width: width, height: 1000))
         scroll.documentView = doc
-
         let pad: CGFloat = 16
-        let cw = popoverW - pad * 2
-        var y: CGFloat = 14
+        let cw = width - 32
+        var y: CGFloat = 0
+        switch section {
+        case 1:
+            if quote.kind == .stock {
+                y = addSECFundamentals(to: doc, y: y, pad: pad, cw: cw)
+                if let loadedFundamentals { renderFundamentals(loadedFundamentals) }
+                else if let fundamentalsError { renderFundamentalsUnavailable(fundamentalsError) }
+            } else {
+                let label = NSTextField(wrappingLabelWithString: "Crypto assets do not publish SEC company financials. Price, volume and market cap are available in Overview.")
+                label.textColor = Theme.textMuted
+                label.frame = NSRect(x: pad, y: 16, width: cw, height: 60)
+                doc.addSubview(label)
+                y = 96
+            }
+        case 2:
+            y = addNews(to: doc, y: y, pad: pad, cw: cw)
+            if newsLoaded { renderNews(newsItems) }
+        default:
+            y = addChart(to: doc, y: y, pad: pad, cw: cw)
+            if let history = historyByRange[chartRange] { terminalChartView?.update(history: history) }
+            let overview = FlippedView(frame: NSRect(x: pad, y: y + 12, width: cw, height: 190))
+            doc.addSubview(overview)
+            overviewHost = overview
+            _ = addSnapshot(to: overview, y: 0, pad: 0, cw: cw)
+            y += 214
+            let holding = makeCard(x: pad, y: y, w: cw, h: 70, radius: 10)
+            doc.addSubview(holding)
+            let title = sectionLabel("YOUR POSITION")
+            title.frame = NSRect(x: 14, y: 10, width: 150, height: 14)
+            holding.addSubview(title)
+            let value = NSTextField(labelWithString: "")
+            value.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            value.textColor = Theme.textPrimary
+            value.frame = NSRect(x: 14, y: 32, width: cw - 150, height: 20)
+            holding.addSubview(value)
+            positionLabel = value
+            updatePositionLabel()
+            let edit = NSButton(title: "Edit position", target: self, action: #selector(editPosition))
+            positionEditButton = edit
+            edit.isEnabled = widget?.config.isCombinedPortfolioActive != true
+            edit.toolTip = widget?.config.isCombinedPortfolioActive == true ? "Choose an individual portfolio to edit this position" : nil
+            edit.bezelStyle = .rounded
+            edit.frame = NSRect(x: cw - 128, y: 28, width: 114, height: 28)
+            holding.addSubview(edit)
+            y += 82
+        }
+        y = addActions(to: doc, y: y + 12, pad: pad, cw: cw)
+        doc.frame.size.height = max(y + 16, scroll.bounds.height)
+        scroll.contentView.scroll(to: .zero)
+    }
 
-        y = addHeader(to: doc, y: y, pad: pad, cw: cw)
-        y = addTerminalNavigator(to: doc, y: y + 8, pad: pad, cw: cw)
-        y = addChart(to: doc, y: y + 8, pad: pad, cw: cw)
-        y = addSnapshot(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addCompanyIntelligence(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addFundamentals(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addSECFundamentals(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addFinancialStack(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addScenarioModel(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addOwnershipAndFlow(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addFilingsAndEvents(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addResearchReadout(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addNews(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addDataAudit(to: doc, y: y + 10, pad: pad, cw: cw)
-        y = addActions(to: doc, y: y + 10, pad: pad, cw: cw)
+    private func updatePositionLabel() {
+        guard let w = widget else { return }
+        positionEditButton?.isEnabled = !w.config.isCombinedPortfolioActive
+        positionEditButton?.toolTip = w.config.isCombinedPortfolioActive ? "Choose an individual portfolio to edit this position" : nil
+        let shares = w.config.holdings[quote.symbol] ?? 0
+        positionLabel?.stringValue = shares > 0
+            ? "\(w.formatShareCount(shares)) shares · \(w.formatCurrency(shares * quote.currentPrice))"
+            : "No position in \((w.config.activePortfolio?.name ?? "Portfolio"))"
+    }
 
-        doc.frame.size.height = max(y + 16, popoverH + 1)
-        return scroll
+    @objc private func editPosition() {
+        guard let w = widget else { return }
+        guard !w.config.isCombinedPortfolioActive else { return }
+        let form = HoldingsForm(shares: w.config.holdings[quote.symbol] ?? 0,
+                                cost: w.config.costBasis[quote.symbol],
+                                availableCash: w.config.cash,
+                                quoteCurrency: quote.currency ?? (quote.kind == .crypto ? w.config.cryptoCurrency : "USD"))
+        let alert = NSAlert()
+        alert.messageText = "\(quote.symbol) position"
+        alert.informativeText = "Set is a manual correction and does not change cash or log a trade. Buy and Sell record funded trades in \((w.config.activePortfolio?.name ?? "Portfolio"))."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.accessoryView = form.view
+        alert.window.initialFirstResponder = form.shareField
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let message = form.validationProblem {
+            let problem = NSAlert()
+            problem.messageText = "Position not saved"
+            problem.informativeText = message
+            problem.runModal()
+            return
+        }
+        switch form.mode {
+        case .set:
+            w.setHolding(symbol: quote.symbol, kind: quote.kind, quantity: form.enteredShares, averageCost: form.enteredCost)
+        case .buy, .sell:
+            guard let price = form.enteredCost, price > 0, form.enteredShares > 0 else {
+                let problem = NSAlert()
+                problem.messageText = "Trade not recorded"
+                problem.informativeText = "Enter a positive quantity and price to record this trade."
+                problem.runModal()
+                return
+            }
+            let side: Transaction.Kind = form.mode == .buy ? .buy : .sell
+            switch TradeCashConfirmation.recordTrade(widget: w, symbol: quote.symbol, kind: quote.kind,
+                                                     side: side, quantity: form.enteredShares, price: price) {
+            case .recorded: break
+            case .cancelled: return
+            case .invalid(let message):
+                let problem = NSAlert()
+                problem.messageText = "Trade not recorded"
+                problem.informativeText = message
+                problem.runModal()
+                return
+            }
+        }
+        updateLiveQuote()
     }
 
     private func addHeader(to doc: NSView, y: CGFloat, pad: CGFloat, cw: CGFloat) -> CGFloat {
@@ -113,14 +342,16 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
 
         let type = quote.kind == .stock ? "Stock" : "Crypto"
         let session = quote.extendedHours?.label ?? (quote.kind == .stock ? quote.marketStatus.label : "24/7 Market")
-        let subtitle = NSTextField(labelWithString: "\(type)  \(session)  \(w.freshnessDescription())")
+        let subtitle = NSTextField(labelWithString: "\(type) · \(session) · \(quote.source ?? (quote.kind == .stock ? "Yahoo Finance" : "CoinGecko"))")
+        subtitle.toolTip = quote.feedStatusDescription() + ". Free provider data may be delayed; receipt time is when this app received the quote."
+        subtitle.setAccessibilityLabel("\(type), \(session), \(quote.feedStatusDescription())")
         subtitle.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         subtitle.textColor = Theme.textFaint
         subtitle.lineBreakMode = .byTruncatingTail
         subtitle.frame = NSRect(x: 15, y: 44, width: 240, height: 14)
         card.addSubview(subtitle)
 
-        let price = NSTextField(labelWithString: "$" + w.formatPrice(quote.currentPrice))
+        let price = NSTextField(labelWithString: quote.kind == .stock ? w.formatCurrency(quote.currentPrice) : "$" + w.formatPrice(quote.currentPrice))
         price.font = NSFont.monospacedDigitSystemFont(ofSize: 24, weight: .bold)
         price.textColor = Theme.textPrimary
         price.alignment = .right
@@ -224,7 +455,8 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         title.frame = NSRect(x: 14, y: 12, width: 160, height: 14)
         card.addSubview(title)
 
-        let period = NSTextField(labelWithString: quote.kind == .stock ? "MULTI-RANGE + VOLUME + MA" : "7D LIVE SAMPLES")
+        let period = NSTextField(labelWithString: quote.kind == .stock ? "INCLUDES EXTENDED HOURS" : "7D LIVE SAMPLES")
+        chartStatusLabel = period
         period.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
         period.textColor = Theme.textFaint
         period.alignment = .right
@@ -245,45 +477,44 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         chartBg.layer?.borderColor = Theme.cardBorder.withAlphaComponent(0.6).cgColor
         card.addSubview(chartBg)
 
-        if quote.chartSeries.count >= 2 {
+        do {
             let chart = TerminalStockChartView(widget: w, quote: quote, history: nil, frame: chartBg.bounds)
             chart.autoresizingMask = [.width, .height]
             chartBg.addSubview(chart)
             terminalChartView = chart
-        } else {
-            let empty = NSTextField(labelWithString: "Chart loading...")
-            empty.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-            empty.textColor = Theme.textFaint
-            empty.alignment = .center
-            empty.frame = chartBg.bounds
-            chartBg.addSubview(empty)
         }
 
+        let statsHost = FlippedView(frame: NSRect(x: 12, y: 314, width: cw - 24, height: 32))
+        card.addSubview(statsHost)
+        chartStatsHost = statsHost
+        renderChartStats()
+        return y + h
+    }
+
+    private func renderChartStats() {
+        guard let host = chartStatsHost else { return }
+        host.subviews.forEach { $0.removeFromSuperview() }
         let stats = chartStats()
-        let statW = (cw - 24 - CGFloat(stats.count - 1) * 8) / CGFloat(stats.count)
+        guard !stats.isEmpty else { return }
+        let statW = (host.bounds.width - CGFloat(stats.count - 1) * 8) / CGFloat(stats.count)
         for (i, stat) in stats.enumerated() {
-            let sx = 12 + CGFloat(i) * (statW + 8)
-            let box = NSView(frame: NSRect(x: sx, y: 314, width: statW, height: 28))
+            let box = FlippedView(frame: NSRect(x: CGFloat(i) * (statW + 8), y: 0, width: statW, height: 32))
             box.wantsLayer = true
             box.layer?.cornerRadius = 7
             box.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.10).cgColor
-            card.addSubview(box)
-
+            host.addSubview(box)
             let label = NSTextField(labelWithString: stat.0.uppercased())
-            label.font = NSFont.systemFont(ofSize: 7, weight: .bold)
+            label.font = NSFont.systemFont(ofSize: 8, weight: .bold)
             label.textColor = Theme.textGhost
-            label.frame = NSRect(x: 7, y: 5, width: statW - 14, height: 8)
+            label.frame = NSRect(x: 7, y: 4, width: statW - 14, height: 10)
             box.addSubview(label)
-
             let value = NSTextField(labelWithString: stat.1)
-            value.font = NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .semibold)
+            value.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
             value.textColor = stat.2 ?? Theme.textSecondary
             value.lineBreakMode = .byTruncatingTail
-            value.frame = NSRect(x: 7, y: 16, width: statW - 14, height: 10)
+            value.frame = NSRect(x: 7, y: 16, width: statW - 14, height: 13)
             box.addSubview(value)
         }
-
-        return y + h
     }
 
     private func addChartRangeControls(to card: NSView, cw: CGFloat) {
@@ -342,7 +573,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         let summary = snapshotSummary()
         let boxW = (cw - 36) / 3
         for (i, item) in summary.enumerated() {
-            let box = NSView(frame: NSRect(x: 12 + CGFloat(i) * (boxW + 6), y: 34, width: boxW, height: 56))
+            let box = FlippedView(frame: NSRect(x: 12 + CGFloat(i) * (boxW + 6), y: 34, width: boxW, height: 56))
             box.wantsLayer = true
             box.layer?.cornerRadius = 8
             box.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.12).cgColor
@@ -408,7 +639,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         title.frame = NSRect(x: 12, y: 12, width: 190, height: 14)
         card.addSubview(title)
 
-        let source = NSTextField(labelWithString: quote.kind == .stock ? "LIVE QUOTE + LOCAL RESEARCH LAYER" : "LIVE CRYPTO + LOCAL RESEARCH LAYER")
+        let source = NSTextField(labelWithString: "\((quote.source ?? (quote.kind == .stock ? "Yahoo Finance" : "CoinGecko")).uppercased()) + LOCAL RESEARCH")
         source.font = NSFont.systemFont(ofSize: 8, weight: .bold)
         source.textColor = Theme.brandCyan.withAlphaComponent(0.68)
         source.alignment = .right
@@ -762,7 +993,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         badge.frame = NSRect(x: cw - 220, y: 13, width: 206, height: 10)
         card.addSubview(badge)
 
-        let container = NSView(frame: NSRect(x: 10, y: 34, width: cw - 20, height: h - 44))
+        let container = FlippedView(frame: NSRect(x: 10, y: 34, width: cw - 20, height: h - 44))
         card.addSubview(container)
         secFundamentalsContainer = container
         renderFundamentalsLoading()
@@ -1184,18 +1415,13 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
 
     private func chartStats() -> [(String, String, NSColor?)] {
         guard let w = widget else { return [] }
-        let series = quote.chartSeries.filter { $0.isFinite && $0 > 0 }
-        let low = series.min() ?? quote.currentPrice
-        let high = series.max() ?? quote.currentPrice
-        let baseline = quote.chartBaseline ?? low
-        let latest = quote.currentPrice
-        let sample = max(series.count, quote.sparkline.count)
+        let summary = TickerChartSummary(quote: quote, history: historyByRange[chartRange])
         return [
-            ("Low", "$" + w.formatPrice(low), Theme.textSecondary),
-            ("High", "$" + w.formatPrice(high), Theme.textSecondary),
-            ("Base", "$" + w.formatPrice(baseline), Theme.textSecondary),
-            ("Now", "$" + w.formatPrice(latest), w.intensityColor(for: quote.chartChange)),
-            ("Pts", "\(sample)", Theme.textSecondary)
+            ("Low", "$" + w.formatPrice(summary.low), Theme.textSecondary),
+            ("High", "$" + w.formatPrice(summary.high), Theme.textSecondary),
+            ("Base", "$" + w.formatPrice(summary.baseline), Theme.textSecondary),
+            ("Last", "$" + w.formatPrice(summary.latest), w.intensityColor(for: summary.percentChange)),
+            ("Pts", "\(summary.count)", Theme.textSecondary)
         ]
     }
 
@@ -1548,6 +1774,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     }
 
     private func fetchFundamentals() {
+        guard fetchesRemoteData else { return }
         guard quote.kind == .stock else {
             renderFundamentalsUnavailable("SEC fundamentals are available for public-company filings, not crypto assets.")
             return
@@ -1575,6 +1802,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     }
 
     private func renderFundamentalsUnavailable(_ message: String) {
+        fundamentalsError = message
         guard let container = secFundamentalsContainer else { return }
         container.subviews.forEach { $0.removeFromSuperview() }
         let label = NSTextField(labelWithString: message)
@@ -1588,6 +1816,8 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     }
 
     private func renderFundamentals(_ fundamentals: StockFundamentals) {
+        loadedFundamentals = fundamentals
+        fundamentalsError = nil
         guard let container = secFundamentalsContainer, let w = widget else { return }
         container.subviews.forEach { $0.removeFromSuperview() }
         fundamentalLookup = fundamentals.annualMetrics
@@ -1898,7 +2128,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         title.frame = NSRect(x: 12, y: 10, width: 110, height: 14)
         card.addSubview(title)
 
-        let container = NSView(frame: NSRect(x: 10, y: 30, width: cw - 20, height: h - 40))
+        let container = FlippedView(frame: NSRect(x: 10, y: 30, width: cw - 20, height: h - 40))
         card.addSubview(container)
         newsContainer = container
         renderNewsLoading()
@@ -1950,7 +2180,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         open.wantsLayer = true
         open.layer?.cornerRadius = 6
         open.layer?.backgroundColor = Theme.brandCyan.withAlphaComponent(0.08).cgColor
-        open.attributedTitle = NSAttributedString(string: "Open Yahoo", attributes: [
+        open.attributedTitle = NSAttributedString(string: (quote.kind == .stock ? "Open Yahoo" : "Open CoinGecko"), attributes: [
             .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
             .foregroundColor: Theme.brandCyan
         ])
@@ -1986,8 +2216,9 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     }
 
     private func renderNews(_ items: [(title: String, link: String)]) {
-        guard let newsContainer else { return }
         newsItems = items
+        newsLoaded = true
+        guard let newsContainer else { return }
         newsContainer.subviews.forEach { $0.removeFromSuperview() }
 
         if items.isEmpty {
@@ -2018,6 +2249,7 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     }
 
     private func fetchNews() {
+        guard fetchesRemoteData else { return }
         guard quote.kind == .stock else {
             renderNews([])
             return
@@ -2168,25 +2400,34 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         chartRangeButtons.forEach { range, button in
             styleChartRangeButton(button, range: range)
         }
+        terminalChartView?.update(history: historyByRange[chartRange])
+        renderChartStats()
         fetchPriceHistory(range: chartRange, force: true)
     }
 
     private func fetchPriceHistory(range: StockChartRange, force: Bool = false) {
-        guard quote.kind == .stock else { return }
+        guard fetchesRemoteData, quote.kind == .stock else { return }
+        if historyByRange[range] == nil { chartStatusLabel?.stringValue = "Loading \(range.rawValue) chart…" }
         StockPriceHistoryService.shared.fetch(symbol: quote.symbol, range: range, force: force) { [weak self] result in
             guard let self else { return }
             guard self.chartRange == range else { return }
             switch result {
             case .success(let history):
+                self.historyByRange[range] = history
+                self.chartStatusLabel?.stringValue = "INCLUDES EXTENDED HOURS"
                 self.terminalChartView?.update(history: history)
+                self.renderChartStats()
             case .failure:
-                self.terminalChartView?.update(history: nil)
+                // Retain the last good chart during a transient network failure.
+                self.chartStatusLabel?.stringValue = self.historyByRange[range] == nil
+                    ? "Chart unavailable · live samples" : "Saved \(range.rawValue) chart"
+                self.chartStatusLabel?.toolTip = "Could not update this chart. The latest available data remains visible."
             }
         }
     }
 
     private func makeCard(x: CGFloat, y: CGFloat, w: CGFloat, h: CGFloat, radius: CGFloat) -> NSView {
-        let card = NSView(frame: NSRect(x: x, y: y, width: w, height: h))
+        let card = FlippedView(frame: NSRect(x: x, y: y, width: w, height: h))
         card.wantsLayer = true
         card.layer?.cornerRadius = radius
         card.layer?.backgroundColor = Theme.cardBg.cgColor
@@ -2602,7 +2843,7 @@ private class MetricGraphView: NSView {
 
 private class TerminalStockChartView: NSView {
     private weak var widget: StockTickerWidget?
-    private let quote: MarketQuote
+    private var quote: MarketQuote
     private var history: StockPriceHistory?
     private var fallbackPoints: [StockPricePoint]
     private var hoverIndex: Int?
@@ -2629,6 +2870,19 @@ private class TerminalStockChartView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override var isOpaque: Bool { false }
+
+    func update(quote: MarketQuote) {
+        self.quote = quote
+        let series = quote.chartSeries.filter { $0.isFinite && $0 > 0 }
+        let times = quote.sparklineTimes
+        fallbackPoints = series.enumerated().map { index, close in
+            let date = times.count == series.count
+                ? Date(timeIntervalSince1970: times[index])
+                : Date().addingTimeInterval(Double(index - max(series.count - 1, 0)) * 300)
+            return StockPricePoint(date: date, open: nil, high: nil, low: nil, close: close, volume: nil)
+        }
+        needsDisplay = true
+    }
 
     func update(history: StockPriceHistory?) {
         self.history = history
@@ -2677,7 +2931,7 @@ private class TerminalStockChartView: NSView {
         let points = chartPoints
         guard points.count > 1, let widget else { return }
 
-        let change = history?.percentChange ?? quote.chartChange
+        let change = TickerChartSummary(quote: quote, history: history).percentChange
         let accent = widget.intensityColor(for: change)
         let pricePlot = pricePlotRect
         let volumePlot = volumePlotRect
@@ -2734,7 +2988,7 @@ private class TerminalStockChartView: NSView {
         drawHeaderLabels(history: history, change: change, color: accent, widget: widget)
         drawRangeLabels(points: points, plot: volumePlot)
 
-        if let hoverIndex {
+        if let hoverIndex, mapped.indices.contains(hoverIndex), points.indices.contains(hoverIndex) {
             drawHover(index: hoverIndex,
                       point: mapped[hoverIndex],
                       value: points[hoverIndex],
@@ -2839,7 +3093,8 @@ private class TerminalStockChartView: NSView {
                  color: Theme.textGhost,
                  font: NSFont.monospacedDigitSystemFont(ofSize: 8, weight: .regular),
                  align: .right)
-        if let baseline = quote.chartBaseline {
+        do {
+            let baseline = TickerChartSummary(quote: quote, history: history).baseline
             drawText("Base $" + widget.formatPrice(baseline),
                      in: NSRect(x: plot.minX, y: plot.minY + 2, width: 116, height: 10),
                      color: Theme.textGhost,
@@ -2887,7 +3142,7 @@ private class TerminalStockChartView: NSView {
 
         drawDot(at: point, radius: 4.2, color: color)
 
-        let reference = chartPoints.first?.close ?? quote.chartBaseline ?? quote.price
+        let reference = TickerChartSummary(quote: quote, history: history).baseline
         let change = reference > 0 ? (value.close - reference) / reference * 100 : quote.chartChange
         let priceText = "$\(widget.formatPrice(value.close))  \(change >= 0 ? "+" : "")\(String(format: "%.2f", change))%"
         let sampleText = "\(dateLabel(value.date))  Vol \(value.volume.map(StockTickerWidget.compactNumber) ?? "--")"

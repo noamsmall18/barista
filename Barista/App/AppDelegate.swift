@@ -5,6 +5,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let statusBarController = StatusBarController()
     private var reopenObserver: NSObjectProtocol?
     var settingsWindow: NSWindow?
+    private var marketbarWindowController: MarketbarWindowController?
+    private var primaryWindow: NSWindow? {
+        AppFlavor.current == .marketbar ? marketbarWindowController?.window : settingsWindow
+    }
     var settingsScrollView: NSScrollView!
     var settingsContentView: NSView!
     let windowWidth: CGFloat = 520
@@ -25,6 +29,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var sparkleUpdater: AnyObject?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !AppPreferences.isRunningTests else { return }
+        NSApp.mainMenu = makeApplicationMenu()
         reopenObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("MarketbarShowSettings"), object: AppFlavor.current.defaultsSuite, queue: .main
         ) { [weak self] _ in self?.showSettingsWindow() }
@@ -68,10 +74,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             // Cmd+Shift+B - toggle settings
             if flags == [.command, .shift] && event.charactersIgnoringModifiers == "b" {
-                if let w = self?.settingsWindow, w.isVisible {
-                    w.orderOut(nil)
-                    NSApp.setActivationPolicy(.accessory)
-                    self?.stopSettingsRefreshTimer()
+                if let w = self?.primaryWindow, w.isVisible {
+                    w.performClose(nil)
                 } else {
                     self?.showSettingsWindow()
                 }
@@ -89,10 +93,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             // Cmd+W - close settings window
             if flags == .command && event.charactersIgnoringModifiers == "w" {
-                if let w = self?.settingsWindow, w.isVisible {
-                    w.orderOut(nil)
-                    NSApp.setActivationPolicy(.accessory)
-                    self?.stopSettingsRefreshTimer()
+                if let w = self?.primaryWindow, w.isVisible {
+                    w.performClose(nil)
                     return nil
                 }
             }
@@ -112,9 +114,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Show onboarding on first launch, settings on subsequent
-        if !UserDefaults.standard.bool(forKey: "barista.hasLaunched") {
-            showOnboardingWindow()
+        if !AppPreferences.shared.bool(forKey: "barista.hasLaunched") {
+            if AppFlavor.current == .marketbar {
+                AppPreferences.shared.set(true, forKey: "barista.hasLaunched")
+                showSettingsWindow()
+            } else {
+                showOnboardingWindow()
+            }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        stopSettingsRefreshTimer()
+        statusBarController.removeAllWidgets()
+        PortfolioHistoryService.shared.flushPendingWrites()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -122,10 +135,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// SwiftPM apps have no main nib to supply macOS's standard app/edit menus.
+    func makeApplicationMenu() -> NSMenu {
+        let main = NSMenu()
+        let app = NSMenu(title: AppFlavor.current.displayName)
+        let appItem = NSMenuItem(title: AppFlavor.current.displayName, action: nil, keyEquivalent: "")
+        appItem.submenu = app
+        main.addItem(appItem)
+        let about = NSMenuItem(title: "About " + AppFlavor.current.displayName, action: #selector(showAboutWindow), keyEquivalent: "")
+        about.target = self
+        app.addItem(about)
+        let settings = NSMenuItem(title: AppFlavor.current == .marketbar ? "Open Marketbar…" : "Settings…", action: #selector(showSettingsWindow), keyEquivalent: ",")
+        settings.target = self
+        app.addItem(settings)
+        app.addItem(.separator())
+        app.addItem(NSMenuItem(title: "Hide " + AppFlavor.current.displayName, action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
+        app.addItem(.separator())
+        app.addItem(NSMenuItem(title: "Quit " + AppFlavor.current.displayName, action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let edit = NSMenu(title: "Edit")
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        for (title, action, key) in [
+            ("Undo", NSSelectorFromString("undo:"), "z"),
+            ("Cut", #selector(NSText.cut(_:)), "x"),
+            ("Copy", #selector(NSText.copy(_:)), "c"),
+            ("Paste", #selector(NSText.paste(_:)), "v"),
+            ("Select All", #selector(NSText.selectAll(_:)), "a")
+        ] {
+            edit.addItem(NSMenuItem(title: title, action: action, keyEquivalent: key))
+        }
+        return main
+    }
+
     // MARK: - Dock Menu
 
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
+        if AppFlavor.current == .marketbar {
+            menu.addItem(NSMenuItem(title: "Open Marketbar", action: #selector(showSettingsWindow), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "Refresh Prices", action: #selector(refreshAllWidgets), keyEquivalent: ""))
+            return menu
+        }
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(showSettingsWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quick Actions", action: #selector(showQuickActions), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Refresh All Widgets", action: #selector(refreshAllWidgets), keyEquivalent: ""))
@@ -252,7 +303,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = OnboardingController()
         controller.onFinish = { [weak self] selectedWidgets in
             guard let self = self else { return }
-            UserDefaults.standard.set(true, forKey: "barista.hasLaunched")
+            AppPreferences.shared.set(true, forKey: "barista.hasLaunched")
 
             self.statusBarController.removeAllWidgets()
             WidgetStore.shared.save([])
@@ -268,6 +319,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Settings Window
 
     @objc func showSettingsWindow() {
+        if AppFlavor.current == .marketbar {
+            if marketbarWindowController == nil {
+                if !statusBarController.activeInstances.contains(where: { $0.widgetID == "stock-ticker" }) {
+                    _ = statusBarController.addWidget(widgetID: "stock-ticker")
+                }
+                guard let widget = statusBarController.activeInstances
+                    .compactMap({ $0.widget.underlying(as: StockTickerWidget.self) }).first else { return }
+                marketbarWindowController = MarketbarWindowController(widget: widget)
+            }
+            marketbarWindowController?.present()
+            return
+        }
         if let w = settingsWindow {
             w.makeKeyAndOrderFront(nil)
             NSApp.setActivationPolicy(.regular)
@@ -344,14 +407,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Track which widgets have expanded config panels
     var expandedWidgets: Set<UUID> = []
+    private var hasBuiltSettingsUI = false
 
     // MARK: - Settings UI
 
     func rebuildSettingsUI() {
         guard let content = settingsContentView else { return }
+        let distanceFromTop = content.frame.height - settingsScrollView.contentView.bounds.maxY
         content.subviews.forEach { $0.removeFromSuperview() }
 
-        let w = windowWidth
+        let w = max(440, settingsScrollView.contentSize.width)
         let pad: CGFloat = 28
 
         let activeWidgets = statusBarController.activeInstances
@@ -1018,6 +1083,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         footer.alignment = .center
         footer.frame = NSRect(x: 0, y: 10, width: w, height: 14)
         content.addSubview(footer)
+        let maxY = max(0, totalHeight - settingsScrollView.contentSize.height)
+        let origin = hasBuiltSettingsUI ? min(maxY, max(0, maxY - distanceFromTop)) : maxY
+        settingsScrollView.contentView.scroll(to: NSPoint(x: 0, y: origin))
+        settingsScrollView.reflectScrolledClipView(settingsScrollView.contentView)
+        hasBuiltSettingsUI = true
     }
 
     // MARK: - Config Panel Height
@@ -2561,12 +2631,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func startSettingsRefreshTimer() {
         settingsRefreshTimer?.invalidate()
+        guard AppFlavor.current == .barista else { return }
         settingsRefreshTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             guard let self = self,
                   let w = self.settingsWindow, w.isVisible,
+                  !w.isMiniaturized,
+                  !(w.firstResponder is NSTextView),
+                  NSApp.modalWindow == nil,
                   !self.expandedWidgets.isEmpty else { return }
             self.rebuildSettingsUI()
         }
+        settingsRefreshTimer?.tolerance = 0.3
     }
 
     func stopSettingsRefreshTimer() {
@@ -2576,6 +2651,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: NSWindowDelegate {
+    func windowDidResize(_ notification: Notification) {
+        guard settingsWindow?.isVisible == true,
+              !(settingsWindow?.firstResponder is NSTextView) else { return }
+        rebuildSettingsUI()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         sender.orderOut(nil)
         NSApp.setActivationPolicy(.accessory)

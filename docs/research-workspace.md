@@ -24,14 +24,15 @@ launcher creates a browser window and reuses the running service. Closing the
 browser leaves it available for the next visit.
 
 If you also use a menu-bar app, **Open Research Workspace** in its ticker dropdown
-opens the same independent service. `./build-app.sh` still packages companions for
-both repo products; the standalone build and install commands above install only
-Marketbar.
+opens the same independent service. `./build-app.sh --install` embeds companions
+in the canonical installed apps; a build-only run creates no `.app` copies.
+The standalone build and install commands above install only Marketbar research.
 
 The native app allows one running instance per product. Opening another build
-copy reopens the existing settings window instead of adding another menu-bar
-item. Keep `/Applications/Marketbar.app` as the installed copy; `dist` is build
-output. The research service has its own process and lifetime.
+copy redirects to the verified `/Applications/Marketbar.app` before loading
+settings. Build-only verification creates no app bundles; installation updates
+that one app and removes temporary staging. The research service has its own
+process and lifetime.
 
 All five workspaces, company lookup, live quotes, price history, SEC financials,
 analyst expectations, news, notebooks, evidence, research questions, valuation,

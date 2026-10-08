@@ -235,13 +235,13 @@ class MenuBarManager {
     // MARK: - Persistence
 
     private func loadHiddenItems() {
-        if let saved = UserDefaults.standard.stringArray(forKey: hiddenKey) {
+        if let saved = AppPreferences.shared.stringArray(forKey: hiddenKey) {
             hiddenItemIDs = Set(saved)
         }
     }
 
     private func saveHiddenItems() {
-        UserDefaults.standard.set(Array(hiddenItemIDs), forKey: hiddenKey)
+        AppPreferences.shared.set(Array(hiddenItemIDs), forKey: hiddenKey)
     }
 
     // MARK: - Auto-Hide Timer
@@ -252,7 +252,7 @@ class MenuBarManager {
     /// Set auto-hide: hidden items briefly reappear then hide again after `seconds`.
     func setAutoHide(interval: TimeInterval) {
         autoHideInterval = interval
-        UserDefaults.standard.set(interval, forKey: "barista.autoHideInterval")
+        AppPreferences.shared.set(interval, forKey: "barista.autoHideInterval")
         autoHideTimer?.invalidate()
         autoHideTimer = nil
     }
@@ -268,7 +268,7 @@ class MenuBarManager {
     }
 
     func loadAutoHideInterval() {
-        autoHideInterval = UserDefaults.standard.double(forKey: "barista.autoHideInterval")
+        autoHideInterval = AppPreferences.shared.double(forKey: "barista.autoHideInterval")
     }
 
     // MARK: - Hover-to-Reveal
@@ -283,7 +283,7 @@ class MenuBarManager {
         hoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
             self?.handleMouseMove(event)
         }
-        UserDefaults.standard.set(true, forKey: "barista.hoverReveal")
+        AppPreferences.shared.set(true, forKey: "barista.hoverReveal")
     }
 
     func disableHoverReveal() {
@@ -294,11 +294,11 @@ class MenuBarManager {
         isHoverRevealed = false
         hoverHideTimer?.invalidate()
         hoverHideTimer = nil
-        UserDefaults.standard.set(false, forKey: "barista.hoverReveal")
+        AppPreferences.shared.set(false, forKey: "barista.hoverReveal")
     }
 
     var isHoverRevealEnabled: Bool {
-        UserDefaults.standard.bool(forKey: "barista.hoverReveal")
+        AppPreferences.shared.bool(forKey: "barista.hoverReveal")
     }
 
     private func handleMouseMove(_ event: NSEvent) {

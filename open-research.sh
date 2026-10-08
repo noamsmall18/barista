@@ -12,9 +12,6 @@ if [ ! -x "$RESEARCH_EXE" ]; then
     RESEARCH_EXE="$RESEARCH_ROOT/dist/${RESEARCH_PRODUCT}Research.bundle/Contents/MacOS/${RESEARCH_PRODUCT}Research"
 fi
 if [ ! -x "$RESEARCH_EXE" ]; then
-    RESEARCH_EXE="$RESEARCH_ROOT/dist/$RESEARCH_PRODUCT.app/Contents/Resources/Research.bundle/Contents/MacOS/${RESEARCH_PRODUCT}Research"
-fi
-if [ ! -x "$RESEARCH_EXE" ]; then
     RESEARCH_EXE="/Applications/$RESEARCH_PRODUCT.app/Contents/Resources/Research.bundle/Contents/MacOS/${RESEARCH_PRODUCT}Research"
 fi
 if [ ! -x "$RESEARCH_EXE" ]; then

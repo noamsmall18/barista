@@ -30,9 +30,9 @@ enum FlavorMigration {
     /// Returns true if anything was imported.
     @discardableResult
     static func importFromBaristaIfNeeded(flavor: AppFlavor = .current) -> Bool {
-        guard flavor == .marketbar else { return false }
+        guard flavor == .marketbar, !AppPreferences.isRunningTests else { return false }
 
-        let ours = UserDefaults.standard
+        let ours = AppPreferences.shared
         // Already done, or the user has been using Marketbar on its own. Either
         // way, importing now would overwrite real work.
         guard !ours.bool(forKey: importedFlag) else { return false }

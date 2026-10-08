@@ -13,7 +13,7 @@ third-party dependencies**.
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
-![Tests](https://img.shields.io/badge/tests-37-brightgreen)
+![Tests](https://img.shields.io/badge/tests-69-brightgreen)
 
 ## Which one do you want?
 
@@ -41,12 +41,13 @@ cd barista
 ```
 
 That builds, assembles `Marketbar.app`, signs it ad-hoc, installs it to
-`/Applications` and launches it. Takes about a minute.
+`/Applications`, replacing the existing copy. Takes about a minute. Open
+`/Applications/Marketbar.app`; add `--launch` to the command to open it immediately.
 
 ```bash
 ./build-app.sh barista --install       # the full widget platform
 ./build-app.sh --install               # both, side by side
-./build-app.sh                         # build only, into ./dist
+./build-app.sh                         # compile only; creates no app copies
 ```
 
 Requirements: macOS 13+ and Apple's Command Line Tools (`xcode-select --install`).
@@ -98,12 +99,30 @@ security trade-off at all.
 
 ### Marketbar: the market terminal
 
+Open Marketbar from the Dock or press Cmd+, for its dedicated portfolio window:
+a live value summary, portfolio switching, historical chart, watchlist and
+position editing. The Menu bar page controls its display without the Barista
+widget gallery. The window and ticker details share the existing quote feed;
+opening them does not create another price polling loop.
+
+The native window also offers searchable and sortable watchlists, mini charts,
+position values, return and allocation context, and market ETF quotes. Enable
+**Ultra-fast** in the window or market dropdown for two-second stock polling
+during market hours and free public streaming for supported USD crypto. Provider
+delays and rate limits still apply. See [free fast refresh](docs/free-fast-refresh.md).
+
+Recorded buys spend existing portfolio cash, and sales credit their proceeds.
+Buys above current cash show an explicit confirmation. Choosing “Record buy
+anyway” deducts the full cost and leaves the shortfall as negative cash; no
+deposit is added. Cancelling leaves the portfolio unchanged. Trade dialogs
+preview the cost and resulting cash. Existing data keeps its cash on migration.
+
 A full position tracker. Multiple
 portfolios with cash, cost basis and allocation breakdowns. A trade ledger where
 buys and sells are the source of truth, so share counts, average cost and
 realised profit are all derived by replaying it and can never drift apart. A
-research popover with balance sheet, cash flow, bull and bear cases and earnings
-yield. Intraday portfolio curves rebuilt from minute bars, benchmark comparison,
+ticker detail popover with a live quote header, price chart, filed SEC financials
+and headlines. Intraday portfolio curves rebuilt from minute bars, benchmark comparison,
 price alerts, and earnings warnings for positions you actually hold.
 
 Regular-session and extended-hours moves are kept separate: the portfolio panel
@@ -125,7 +144,7 @@ pre-market, regular and post-market bars rather than drawing them as one line.
 
 ```bash
 swift build -c release          # binary only
-./build-app.sh                  # assembles both apps into ./dist
+./build-app.sh                  # compile only; creates no app copies
 ./build-app.sh marketbar        # just Marketbar
 ./build-app.sh barista --install
 ```
@@ -149,6 +168,11 @@ widgets' code; it is simply unreachable.
 ```bash
 swift test
 ```
+
+Tests automatically use in-memory preferences and cannot start the installed
+app or research helper. Agent-run tests must also explicitly use
+`BARISTA_TEST_MODE=1 swift test`; never reset or replace the installed app's
+portfolio data to verify a change.
 
 37 tests covering the trade ledger, portfolio migration, trading-session
 segmentation, DataFetcher's threading contract and the flavour split. They run against a saved real

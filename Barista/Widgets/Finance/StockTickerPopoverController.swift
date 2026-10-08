@@ -2,22 +2,27 @@ import Cocoa
 
 // MARK: - Stock Ticker Main Popover
 
-class MarketPopoverController: NSObject, NSTextFieldDelegate {
+class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate {
     weak var widget: StockTickerWidget?
     private var scrollView: NSScrollView!
     private var docView: FlippedView!
     private let popoverW: CGFloat = 420
-    private var detailPopover: NSPopover?
+    private(set) var detailPopover: NSPopover?
+    private var dataObserver: NSObjectProtocol?
+    private var refreshPending = false
 
-    init(widget: StockTickerWidget) {
+    private let fetchesDetailData: Bool
+
+    init(widget: StockTickerWidget, fetchesDetailData: Bool = true) {
         self.widget = widget
+        self.fetchesDetailData = fetchesDetailData
         super.init()
     }
 
     func buildView() -> NSView {
         guard let w = widget else { return NSView() }
 
-        scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: popoverW, height: 560))
+        scrollView = DropdownScrollView(frame: NSRect(x: 0, y: 0, width: popoverW, height: 560))
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
@@ -29,18 +34,48 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
         rebuildContent()
 
-        w.onDataRefresh = { [weak self] in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                // The detail popover is anchored to a button inside this content.
-                // Rebuilding removes that button and closes the popover, so defer
-                // the live refresh until the detail popover is dismissed.
-                if self.detailPopover?.isShown == true { return }
-                self.rebuildContent()
-            }
+        dataObserver = NotificationCenter.default.addObserver(
+            forName: StockTickerWidget.dataDidChange, object: nil, queue: .main
+        ) { [weak self, weak w] note in
+            guard let self, let w, note.object as AnyObject? === w else { return }
+            self.refreshContentIfPossible()
+        }
+        (scrollView as? DropdownScrollView)?.onDetach = { [weak self] in
+            self?.endPresentation()
         }
 
         return scrollView
+    }
+
+    private func refreshContentIfPossible() {
+        guard scrollView.window != nil else { return }
+        guard detailPopover?.isShown != true,
+              !(scrollView.window?.firstResponder is NSTextView), NSApp.modalWindow == nil else {
+            refreshPending = true
+            return
+        }
+        refreshPending = false
+        rebuildContent()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        detailPopover = nil
+        // Let AppKit finish releasing the anchor before rebuilding its row.
+        DispatchQueue.main.async { [weak self] in self?.refreshContentIfPossible() }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        if refreshPending {
+            DispatchQueue.main.async { [weak self] in self?.refreshContentIfPossible() }
+        }
+    }
+
+    private func endPresentation() {
+        detailPopover?.animates = false
+        detailPopover?.close()
+        detailPopover = nil
+        if let dataObserver { NotificationCenter.default.removeObserver(dataObserver) }
+        dataObserver = nil
     }
 
     private func rebuildContent() {
@@ -62,6 +97,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         docView.addSubview(dashboard)
         y += 46
 
+        addFeedStatus(y: &y, pad: pad, cw: cw)
+
         let sorted = w.sortedQuotes()
         let stocks = sorted.filter { $0.kind == .stock }
         let crypto = sorted.filter { $0.kind == .crypto }
@@ -71,7 +108,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         // indices bar. Once a second portfolio exists the card stays put even when
         // the active one is empty, otherwise the tabs would vanish with no way back.
         let snapshot = w.portfolioSnapshot()
-        if snapshot != nil || w.config.portfolios.count > 1 {
+        if snapshot != nil || w.config.portfolioChoices.count > 1 {
             y += 2
             addPortfolioPanel(snapshot, y: &y, pad: pad, cw: cw)
         }
@@ -142,6 +179,40 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func openDashboard() { widget?.openResearchDashboard() }
+
+    /// Keep data age and failures visible without making users infer whether a
+    /// quiet ticker is current. The widget's freshness string distinguishes live
+    /// data, cached data, offline state, and provider backoff.
+    private func addFeedStatus(y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
+        guard let w = widget else { return }
+        let row = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: 27))
+        row.wantsLayer = true
+        row.layer?.cornerRadius = 7
+        row.layer?.backgroundColor = w.freshnessColor().withAlphaComponent(0.07).cgColor
+        docView.addSubview(row)
+
+        let dot = NSView(frame: NSRect(x: 10, y: 10, width: 7, height: 7))
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 3.5
+        dot.layer?.backgroundColor = w.freshnessColor().cgColor
+        row.addSubview(dot)
+
+        let title = NSTextField(labelWithString: "FEED")
+        title.font = NSFont.systemFont(ofSize: 8, weight: .bold)
+        title.textColor = Theme.textFaint
+        title.frame = NSRect(x: 23, y: 7, width: 34, height: 12)
+        row.addSubview(title)
+
+        let status = NSTextField(labelWithString: w.freshnessDescription())
+        status.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium)
+        status.textColor = w.freshnessColor()
+        status.lineBreakMode = .byTruncatingTail
+        status.frame = NSRect(x: 58, y: 6, width: cw - 72, height: 14)
+        status.setAccessibilityLabel("Market data status: \(w.freshnessDescription())")
+        row.addSubview(status)
+
+        y += 34
+    }
 
     // MARK: - Portfolio Panel
 
@@ -384,9 +455,9 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     // MARK: - Panel: history section
 
     private func historySectionHeight() -> CGFloat {
-        guard let w = widget, let active = w.config.activePortfolio else { return 22 }
+        guard let w = widget, w.config.activePortfolio != nil else { return 22 }
         if w.config.historyCollapsed { return 22 }
-        let points = historyPoints(for: active.id, range: w.config.historyRange)
+        let points = historyPoints(for: w.config.activePortfolioHistoryID, range: w.config.historyRange)
         return points.count >= 2 ? 22 + 6 + 104 + 13 + 16 : 22 + 6 + 26
     }
 
@@ -403,10 +474,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     }
 
     private func addHistorySection(_ pv: PortfolioSnapshot, to panel: NSView, top: CGFloat, cw: CGFloat) {
-        guard let w = widget, let active = w.config.activePortfolio else { return }
+        guard let w = widget, w.config.activePortfolio != nil else { return }
         let range = w.config.historyRange
         let collapsed = w.config.historyCollapsed
-        let points = historyPoints(for: active.id, range: range)
+        let points = historyPoints(for: w.config.activePortfolioHistoryID, range: range)
         let hasChart = points.count >= 2
 
         let delta: (absolute: Double, percent: Double)? = {
@@ -441,7 +512,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
         var cursor = top + 22 + 6
         guard hasChart else {
-            let totalSamples = PortfolioHistoryService.shared.sampleCount(for: active.id)
+            let totalSamples = PortfolioHistoryService.shared.sampleCount(for: w.config.activePortfolioHistoryID)
             let message: String
             if range.isIntraday {
                 message = "No intraday data yet - it fills in as quotes arrive during the session."
@@ -492,7 +563,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         }
         cursor += 13
 
-        addHistoryFooter(to: panel, top: cursor, cw: cw, portfolioID: active.id,
+        addHistoryFooter(to: panel, top: cursor, cw: cw, portfolioID: w.config.activePortfolioHistoryID,
                          range: range, points: points, chart: chart, widget: w)
     }
 
@@ -798,16 +869,19 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     /// Sets uninvested cash on the active portfolio; also displays the current amount.
     private func addCashButton(to card: NSView, cash: Double, atY cashY: CGFloat, cw: CGFloat) {
         guard let w = widget else { return }
-        let cashStr = cash > 0 ? "Cash \(w.formatCurrency(cash))" : "+ cash"
-        let cashBtn = NSButton(frame: NSRect(x: cw - 94, y: cashY, width: 90, height: 16))
+        let cashStr = cash != 0 ? "Cash \(w.formatCurrency(cash))" : "+ cash"
+        let cashBtn = NSButton(frame: NSRect(x: cw - 116, y: cashY, width: 112, height: 16))
         cashBtn.isBordered = false; cashBtn.wantsLayer = true
         cashBtn.layer?.cornerRadius = 5
-        cashBtn.layer?.backgroundColor = (cash > 0 ? Theme.brandAmber.withAlphaComponent(0.12) : NSColor.clear).cgColor
+        let cashColor = cash < 0 ? Theme.red : (cash > 0 ? Theme.brandAmber : Theme.textGhost)
+        cashBtn.layer?.backgroundColor = (cash != 0 ? cashColor.withAlphaComponent(0.12) : NSColor.clear).cgColor
         cashBtn.attributedTitle = NSAttributedString(string: cashStr, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .medium),
-            .foregroundColor: cash > 0 ? Theme.brandAmber : Theme.textGhost
+            .foregroundColor: cashColor
         ])
         cashBtn.target = self; cashBtn.action = #selector(cashClicked(_:))
+        cashBtn.isEnabled = !w.config.isCombinedPortfolioActive
+        cashBtn.toolTip = w.config.isCombinedPortfolioActive ? "Cash is combined automatically from individual portfolios" : "Edit portfolio cash"
         card.addSubview(cashBtn)
     }
 
@@ -817,7 +891,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     /// Display/Sort segments in Settings. Clicking the active tab opens rename/delete.
     private func addPortfolioTabs(to card: NSView, cardW: CGFloat, atY tabY: CGFloat) {
         guard let w = widget else { return }
-        let portfolios = w.config.portfolios
+        let portfolios = w.config.portfolioChoices
         guard !portfolios.isEmpty else { return }
 
         let trackX: CGFloat = 10
@@ -862,7 +936,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
                 .foregroundColor: isActive ? Theme.brandAmber : Theme.textMuted,
                 .paragraphStyle: clip
             ])
-            btn.toolTip = isActive ? "\(p.name) - click again to rename or delete" : "Switch to \(p.name)"
+            btn.toolTip = p.id == Portfolio.combinedID ? "Automatically combines all individual portfolios" :
+                (isActive ? "\(p.name) - click again to rename or delete" : "Switch to \(p.name)")
             btn.target = self; btn.action = #selector(portfolioTabClicked(_:))
             btn.identifier = NSUserInterfaceItemIdentifier(p.id)
             track.addSubview(btn)
@@ -977,6 +1052,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
             .foregroundColor: holdingQty > 0 ? Theme.brandAmber : Theme.textGhost
         ])
         holdBtn.target = self; holdBtn.action = #selector(holdingsClicked(_:))
+        holdBtn.isEnabled = !w.config.isCombinedPortfolioActive
+        holdBtn.toolTip = w.config.isCombinedPortfolioActive ? "Choose an individual portfolio to edit this position" : "Edit position"
         holdBtn.identifier = NSUserInterfaceItemIdentifier("hold:\(q.kind.rawValue):\(q.symbol)")
         card.addSubview(holdBtn)
 
@@ -1340,6 +1417,16 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         settingsCard.addSubview(hDiv)
         iy += 8
 
+        let combined = NSButton(checkboxWithTitle: "Show All Portfolios", target: self,
+                                action: #selector(combinedPortfolioToggled(_:)))
+        combined.font = .systemFont(ofSize: 11)
+        combined.state = w.config.combinedPortfolioEnabled ? .on : .off
+        combined.toolTip = "Automatically combine holdings and cash from every portfolio"
+        combined.identifier = NSUserInterfaceItemIdentifier("portfolio.combined.toggle")
+        combined.frame = NSRect(x: inset, y: iy, width: innerW, height: 20)
+        settingsCard.addSubview(combined)
+        iy += 28
+
         // Display Mode
         let modeLabel = NSTextField(labelWithString: "Display")
         modeLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); modeLabel.textColor = Theme.textMuted
@@ -1547,6 +1634,61 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         }
         iy += 32
 
+        // The faster mode is explicitly best-effort: the free quote providers
+        // still set their own limits, which the summary below explains.
+        let speedLabel = NSTextField(labelWithString: "Refresh speed")
+        speedLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
+        speedLabel.textColor = Theme.textMuted
+        speedLabel.frame = NSRect(x: inset, y: iy, width: 78, height: 14)
+        settingsCard.addSubview(speedLabel)
+
+        let speedTrack = NSView(frame: NSRect(x: inset + 78, y: iy - 4, width: innerW - 78, height: 24))
+        speedTrack.wantsLayer = true
+        speedTrack.layer?.cornerRadius = 7
+        speedTrack.layer?.backgroundColor = Theme.sunkenBg.cgColor
+        settingsCard.addSubview(speedTrack)
+
+        let refreshModes: [(String, StockTickerRefreshMode)] = [("Standard", .standard), ("Ultra-fast", .ultraFast)]
+        let modeGap: CGFloat = 3
+        let modeW = (speedTrack.frame.width - modeGap * 3) / 2
+        for (index, (title, mode)) in refreshModes.enumerated() {
+            let x = modeGap + CGFloat(index) * (modeW + modeGap)
+            let isActive = w.config.refreshMode == mode
+            if isActive {
+                let pill = NSView(frame: NSRect(x: x, y: 2, width: modeW, height: 20))
+                pill.wantsLayer = true
+                pill.layer?.cornerRadius = 5
+                pill.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.2).cgColor
+                pill.layer?.borderWidth = 0.5
+                pill.layer?.borderColor = Theme.brandAmber.withAlphaComponent(0.4).cgColor
+                speedTrack.addSubview(pill)
+            }
+            let button = NSButton(frame: NSRect(x: x, y: 2, width: modeW, height: 20))
+            button.isBordered = false
+            button.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: 9, weight: isActive ? .semibold : .regular),
+                .foregroundColor: isActive ? Theme.brandAmber : Theme.textMuted
+            ])
+            button.toolTip = mode == .ultraFast
+                ? "Best-effort faster updates; free data providers can limit request frequency."
+                : "Use the standard market data refresh cadence."
+            button.setAccessibilityLabel(title + " refresh mode")
+            button.target = self
+            button.action = #selector(refreshModeChanged(_:))
+            button.tag = index
+            speedTrack.addSubview(button)
+        }
+        iy += 25
+
+        let speedSummary = NSTextField(labelWithString: w.refreshModeSummary)
+        speedSummary.font = NSFont.systemFont(ofSize: 8.5, weight: .regular)
+        speedSummary.textColor = Theme.textFaint
+        speedSummary.lineBreakMode = .byTruncatingTail
+        speedSummary.frame = NSRect(x: inset, y: iy, width: innerW, height: 12)
+        speedSummary.setAccessibilityLabel("Refresh details: \(w.refreshModeSummary)")
+        settingsCard.addSubview(speedSummary)
+        iy += 16
+
         // Color mode
         let cmLabel = NSTextField(labelWithString: "Color")
         cmLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); cmLabel.textColor = Theme.textMuted
@@ -1625,9 +1767,9 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         alertIcon.contentTintColor = Theme.textFaint
         settingsCard.addSubview(alertIcon)
 
-        let alertLabel = NSTextField(labelWithString: "Price Alert")
+        let alertLabel = NSTextField(labelWithString: "Price Alerts")
         alertLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); alertLabel.textColor = Theme.textMuted
-        alertLabel.frame = NSRect(x: inset + 16, y: iy, width: 65, height: 14)
+        alertLabel.frame = NSRect(x: inset + 16, y: iy, width: 76, height: 14)
         settingsCard.addSubview(alertLabel)
 
         let alertCount = w.config.priceAlerts.count
@@ -1650,8 +1792,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         alertField.backgroundColor = .clear; alertField.drawsBackground = false
         alertField.isBordered = false; alertField.focusRingType = .none
         alertField.placeholderAttributedString = NSAttributedString(
-            string: "AAPL 250 (symbol + target price)",
+            string: "Symbol + target, e.g. AAPL 250",
             attributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: Theme.textFaint])
+        alertField.toolTip = "Press Return to save or replace a price alert."
+        alertField.setAccessibilityLabel("Set price alert using symbol and target price")
         alertField.delegate = self
         alertField.tag = 999
         alertCard.addSubview(alertField)
@@ -1672,17 +1816,6 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         footer.wantsLayer = true; footer.layer?.cornerRadius = 7
         footer.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.02).cgColor
         docView.addSubview(footer)
-
-        let clockIcon = NSImageView(frame: NSRect(x: 8, y: 9, width: 12, height: 12))
-        clockIcon.image = NSImage(systemSymbolName: "clock", accessibilityDescription: "Updated")
-        clockIcon.contentTintColor = Theme.textGhost
-        footer.addSubview(clockIcon)
-
-        let timeLabel = NSTextField(labelWithString: w.freshnessDescription())
-        timeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
-        timeLabel.textColor = w.freshnessColor()
-        timeLabel.frame = NSRect(x: 24, y: 9, width: 112, height: 14)
-        footer.addSubview(timeLabel)
 
         let refreshBtn = NSButton(frame: NSRect(x: cw / 2 - 42, y: 6, width: 84, height: 18))
         refreshBtn.isBordered = false
@@ -1765,12 +1898,14 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         let symbol = String(parts[2])
         guard let quote = w.sortedQuotes().first(where: { $0.kind == kind && $0.symbol == symbol }) else { return }
 
+        detailPopover?.delegate = nil
         detailPopover?.close()
-        let vc = StockDetailPopoverController(widget: w, quote: quote)
+        let vc = StockDetailPopoverController(widget: w, quote: quote, screen: sender.window?.screen, fetchesRemoteData: fetchesDetailData)
         let popover = NSPopover()
         popover.behavior = .transient
         popover.animates = true
-        popover.contentSize = NSSize(width: 620, height: 760)
+        popover.contentSize = StockDetailPopoverController.preferredSize(on: sender.window?.screen)
+        popover.delegate = self
         popover.contentViewController = vc
         detailPopover = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxX)
@@ -1778,6 +1913,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
     @objc private func holdingsClicked(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue, let w = widget else { return }
+        guard !w.config.isCombinedPortfolioActive else { return }
         let parts = id.split(separator: ":", maxSplits: 2)
         guard parts.count == 3 else { return }
         let kind: MarketQuote.Kind = String(parts[1]) == "crypto" ? .crypto : .stock
@@ -1785,16 +1921,20 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
         let alert = NSAlert()
         alert.messageText = "\(symbol) position"
-        alert.informativeText = "Set corrects the position outright. Buy and Sell log a trade, which is what lets Barista work out what you have actually banked."
+        alert.informativeText = "Set is a manual correction and does not change cash or log a trade. Buy and Sell record funded trades and update your cash balance."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
         let form = HoldingsForm(shares: w.config.holdings[symbol] ?? 0,
-                                cost: w.config.costBasis[symbol])
+                                cost: w.config.costBasis[symbol],
+                                availableCash: w.config.cash,
+                                quoteCurrency: w.quotes.first { $0.symbol == symbol && $0.kind == kind }?.currency
+                                    ?? (kind == .crypto ? w.config.cryptoCurrency : "USD"))
         alert.accessoryView = form.view
         alert.window.initialFirstResponder = form.shareField
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        if let problem = form.validationProblem { presentTradeProblem(problem); return }
 
         switch form.mode {
         case .set:
@@ -1807,10 +1947,11 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
                 presentTradeProblem("Enter both a share count and a price to log a trade.")
                 return
             }
-            if !w.recordTrade(symbol: symbol, kind: kind, side: side,
-                              quantity: form.enteredShares, price: price) {
-                presentTradeProblem("You hold \(w.formatShareCount(w.config.holdings[symbol] ?? 0)) of \(symbol), so that sale cannot be recorded.")
-                return
+            switch TradeCashConfirmation.recordTrade(widget: w, symbol: symbol, kind: kind,
+                                                     side: side, quantity: form.enteredShares, price: price) {
+            case .recorded: break
+            case .cancelled: return
+            case .invalid(let message): presentTradeProblem(message); return
             }
         }
         rebuildContent()
@@ -1826,9 +1967,15 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
     // MARK: - Portfolio Actions
 
+    @objc private func combinedPortfolioToggled(_ sender: NSButton) {
+        widget?.setCombinedPortfolioEnabled(sender.state == .on)
+        rebuildContent()
+    }
+
     @objc private func portfolioTabClicked(_ sender: NSButton) {
         guard let w = widget, let id = sender.identifier?.rawValue else { return }
         if id == w.config.activePortfolioID {
+            guard !w.config.isCombinedPortfolioActive else { return }
             showPortfolioMenu(from: sender)
         } else {
             w.selectPortfolio(id: id)
@@ -1915,6 +2062,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
 
     @objc private func cashClicked(_ sender: NSButton) {
         guard let w = widget else { return }
+        guard !w.config.isCombinedPortfolioActive else { return }
         let alert = NSAlert()
         alert.messageText = "Set Cash Balance"
         alert.informativeText = "Enter uninvested cash in dollars (0 to remove):"
@@ -1928,8 +2076,13 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         alert.window.initialFirstResponder = input
 
         if alert.runModal() == .alertFirstButtonReturn {
-            let cleaned = input.stringValue.filter { $0.isNumber || $0 == "." || $0 == "-" }
-            w.setCash(Double(cleaned) ?? 0)
+            let cleaned = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: ",", with: "").replacingOccurrences(of: "$", with: "")
+            guard let cash = Double(cleaned), cash.isFinite, cash >= 0 else {
+                presentTradeProblem("Enter a valid, non-negative cash amount.")
+                return
+            }
+            w.setCash(cash)
             rebuildContent()
         }
     }
@@ -2006,6 +2159,13 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
         rebuildContent()
     }
 
+    @objc private func refreshModeChanged(_ sender: NSButton) {
+        guard let w = widget else { return }
+        let mode: StockTickerRefreshMode = sender.tag == 1 ? .ultraFast : .standard
+        w.setRefreshMode(mode)
+        rebuildContent()
+    }
+
     // MARK: - NSTextFieldDelegate
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy sel: Selector) -> Bool {
@@ -2034,6 +2194,15 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate {
     }
 
     deinit {
-        widget?.onDataRefresh = nil
+        endPresentation()
+    }
+}
+
+/// Release child popovers and subscriptions when the menu-bar panel closes.
+private final class DropdownScrollView: NSScrollView {
+    var onDetach: (() -> Void)?
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { onDetach?() }
     }
 }

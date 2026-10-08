@@ -16,7 +16,7 @@ class WidgetStore {
     private let replacementWidgetIDs = ["system-health", "today-brief"]
 
     func loadActiveWidgets() -> [SavedWidget] {
-        guard let data = UserDefaults.standard.data(forKey: key),
+        guard let data = AppPreferences.shared.data(forKey: key),
               let saved = try? JSONDecoder().decode([SavedWidget].self, from: data)
         else { return defaultWidgets() }
         // Filter out widgets whose type no longer exists or has been retired from the live gallery.
@@ -49,7 +49,7 @@ class WidgetStore {
 
     func save(_ widgets: [SavedWidget]) {
         if let data = try? JSONEncoder().encode(widgets) {
-            UserDefaults.standard.set(data, forKey: key)
+            AppPreferences.shared.set(data, forKey: key)
         }
     }
 
@@ -109,12 +109,12 @@ class WidgetStore {
         var all = loadAllMemory()
         all[widgetID] = data
         if let encoded = try? JSONEncoder().encode(all) {
-            UserDefaults.standard.set(encoded, forKey: memoryKey)
+            AppPreferences.shared.set(encoded, forKey: memoryKey)
         }
     }
 
     private func loadAllMemory() -> [String: Data] {
-        guard let raw = UserDefaults.standard.data(forKey: memoryKey),
+        guard let raw = AppPreferences.shared.data(forKey: memoryKey),
               let decoded = try? JSONDecoder().decode([String: Data].self, from: raw)
         else { return [:] }
         return decoded

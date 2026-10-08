@@ -89,7 +89,7 @@ class WidgetInstance {
         }
     }
 
-    private func showDropdownMenu() {
+    func showDropdownMenu() {
         guard let item = statusItem, let button = item.button else { return }
 
         // Use NSPopover for widgets with interactive dropdowns
@@ -132,6 +132,7 @@ class WidgetInstance {
     }
 
     func deactivate() {
+        popoverController?.dismiss()
         widget.stop()
         if let obs = configObserver { NotificationCenter.default.removeObserver(obs) }
         configObserver = nil

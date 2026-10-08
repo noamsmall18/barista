@@ -43,6 +43,14 @@ test('renders shared portfolio values and chart, with escaped user names',async(
   assert.match(node('portfolio-chart').innerHTML,/data-points=/);
   assert.doesNotMatch(node('status').textContent,/Disconnected/);
 });
+test('combined portfolio explains automatic aggregation and counts source accounts',async()=>{
+  const data=fixture();data.portfolioName='All Portfolios';data.combinedPortfolio=true;
+  data.portfolios=[{id:'first',name:'Main'},{id:'second',name:'Savings'}];
+  const {node}=await render(data);
+  assert.equal(node('portfolio-name').textContent,'All Portfolios');
+  assert.match(node('portfolio-note').textContent,/2 portfolios/);
+  assert.match(node('portfolio-note').textContent,/Automatically combined from all portfolios/);
+});
 test('mixed currencies suppress portfolio weights, aggregate charts and total',async()=>{
   const data=fixture();data.summary.currencyComparable=false;data.summary.liveTotal=null;
   data.quotes[0].currency='EUR';data.quotes[0].weight=null;

@@ -127,7 +127,7 @@ function render() {
   $('workspace-date').textContent = new Date().toLocaleDateString([], {weekday:'short',month:'short',day:'numeric',year:'numeric'});
   $('brand').textContent = state.app; $('portfolio-name').textContent = state.portfolioName;
   document.title = `${state.portfolioName} · ${state.app} Research`;
-  $('portfolio-note').textContent = `${s.positions} priced positions · ${state.portfolios.length} portfolio${state.portfolios.length===1?'':'s'} · ${state.standalone?'Independent research service · app can be closed.':'Following your active portfolio in the menu bar.'}`;
+  $('portfolio-note').textContent = `${s.positions} priced positions · ${state.portfolios.length} portfolio${state.portfolios.length===1?'':'s'} · ${state.combinedPortfolio?'Automatically combined from all portfolios · ':''}${state.standalone?'Independent research service · app can be closed.':'Following your active portfolio in the menu bar.'}`;
   $('summary').innerHTML = metric('Live portfolio value',money(s.liveTotal),s.currencyComparable ? `Cash ${money(s.cash)} · Includes available extended hours` : 'Mixed quote currencies · total withheld') +
     metric('Regular-session move',signed(s.dayPL),pct(s.dayPercent),tone(s.dayPL)) +
     metric('Unrealized gain / loss',signed(s.unrealizedPL),`${pct(s.unrealizedPercent)} · ${s.missingCostCount ? `${s.missingCostCount} positions without cost basis` : 'On positions with cost basis'}`,tone(s.unrealizedPL)) +
@@ -161,15 +161,18 @@ function renderBriefing() {
 function renderExposure() {
   const exposure = A.exposure(state);
   if (!exposure) {
-    $('allocation').innerHTML = empty(state.summary.currencyComparable?'Add holdings to see your allocation.':'Allocation unavailable across different quote currencies.');
+    $('allocation').innerHTML = empty(state.summary.currencyComparable?(state.summary.liveTotal===0?'Net value is zero; exposure percentages are unavailable.':'Add holdings to see your allocation.'):'Allocation unavailable across different quote currencies.');
+    if(state.summary.cash<0)$('allocation').innerHTML+=`<div class="allocation-row"><span>Cash shortfall</span><span class="down">${money(state.summary.cash)}</span></div>`;
     $('allocation-donut').innerHTML=''; $('concentration').innerHTML='';
   } else {
     const rows = exposure.held.slice(0,6), others=exposure.held.slice(6).reduce((sum,q)=>sum+q.weight,0);
-    const slices = [...rows, ...(others>0?[{symbol:'Other holdings',weight:others}]:[]), ...(exposure.cashWeight>0?[{symbol:'Cash',weight:exposure.cashWeight}]:[])];
+    const slices = [...rows, ...(others!==0?[{symbol:'Other holdings',weight:others}]:[]), ...(state.summary.cash>0?[{symbol:'Cash',weight:exposure.cashWeight}]:[])];
+    const grossWeight=slices.reduce((sum,q)=>sum+Math.abs(q.weight),0);
     let offset=0;
-    const arcs=slices.map((q,i)=>{const len=q.weight*.01*301.59, segment=`<circle cx="58" cy="58" r="48" fill="none" stroke="${q.symbol==='Cash'?'#394b5e':colors[i%colors.length]}" stroke-width="10" stroke-dasharray="${len} ${301.59-len}" stroke-dashoffset="${-offset}"/>`;offset+=len;return segment;}).join('');
-    $('allocation-donut').innerHTML=`<div class="donut"><svg viewBox="0 0 116 116" role="img" aria-label="Capital allocation. ${esc(slices.map(q=>q.symbol+' '+q.weight.toFixed(1)+'%').join(', '))}"><circle cx="58" cy="58" r="48" fill="none" stroke="#25313d" stroke-width="10"/>${arcs}</svg><div class="donut-label"><b>${exposure.held.length}</b><span>priced positions</span></div></div>`;
+    const arcs=slices.map((q,i)=>{const len=(grossWeight?Math.abs(q.weight)/grossWeight:0)*301.59, segment=`<circle cx="58" cy="58" r="48" fill="none" stroke="${q.symbol==='Cash'?'#394b5e':colors[i%colors.length]}" stroke-width="10" stroke-dasharray="${len} ${301.59-len}" stroke-dashoffset="${-offset}"/>`;offset+=len;return segment;}).join('');
+    $('allocation-donut').innerHTML=`<div class="donut"><svg viewBox="0 0 116 116" role="img" aria-label="Asset distribution; cash shortfall is shown separately."><circle cx="58" cy="58" r="48" fill="none" stroke="#25313d" stroke-width="10"/>${arcs}</svg><div class="donut-label"><b>${exposure.held.length}</b><span>priced positions</span></div></div>`;
     $('allocation').innerHTML=slices.map((q,i)=>`<div class="allocation-row"><svg class="swatch" viewBox="0 0 8 8" aria-hidden="true"><rect width="8" height="8" rx="2" fill="${q.symbol==='Cash'?'#394b5e':colors[i%colors.length]}"/></svg>${state.quotes.some(s=>s.symbol===q.symbol)?`<button data-open-symbol="${esc(q.symbol)}">${esc(q.symbol)}</button>`:`<span>${esc(q.symbol)}</span>`}<span>${q.weight.toFixed(1)}%</span></div>`).join('');
+    if(state.summary.cash<0)$('allocation').innerHTML+=`<div class="allocation-row"><span>Cash shortfall</span><span class="down">${money(state.summary.cash)}</span></div>`;
     $('concentration').innerHTML=stat('Largest position',exposure.held[0]?exposure.held[0].weight.toFixed(1)+'%':'—',exposure.held[0]?.symbol||'No held positions')+stat('Top 3 concentration',exposure.topThree.toFixed(1)+'%','Of priced portfolio + cash')+stat('Effective positions',exposure.effectivePositions.toFixed(1),'Inverse holding concentration; excludes cash');
   }
   const contributors=state.quotes.filter(q=>q.quantity>0&&valid(q.dayPL)).sort((a,b)=>Math.abs(b.dayPL)-Math.abs(a.dayPL)).slice(0,7);

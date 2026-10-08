@@ -88,6 +88,9 @@ final class PopoverController {
 
     func dismiss() {
         panel?.orderOut(nil)
+        // Closing an unreleased NSPanel can leave its content attached. Detach
+        // explicitly so nested popovers and data observers end with the parent.
+        panel?.contentView = nil
         panel?.close()
         panel = nil
         monitors.forEach { NSEvent.removeMonitor($0) }

@@ -18,6 +18,7 @@ class DataFetcher {
     struct HTTPError: LocalizedError {
         let statusCode: Int
         let host: String
+        var retryAfter: TimeInterval? = nil
 
         var isRateLimited: Bool { statusCode == 429 }
 
@@ -44,6 +45,22 @@ class DataFetcher {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
         ]
         self.session = URLSession(configuration: config)
+    }
+
+    /// Allows deterministic transport tests without contacting a price provider.
+    init(configuration: URLSessionConfiguration) {
+        self.session = URLSession(configuration: configuration)
+    }
+
+    static func retryDelay(_ value: String?, now: Date = Date()) -> TimeInterval? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        if let seconds = TimeInterval(value), seconds.isFinite, seconds >= 0 { return seconds }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss z"
+        guard let date = formatter.date(from: value) else { return nil }
+        return max(0, date.timeIntervalSince(now))
     }
 
     /// Simple GET fetch with caching (existing API).
@@ -101,6 +118,9 @@ class DataFetcher {
             callbacks.forEach { Self.deliver(result, to: $0) }
         }
         var urlReq = URLRequest(url: request.url)
+        // This client owns its cache TTL. URLSession's protocol cache must not
+        // silently reuse an older quote when the caller asks for a fresh one.
+        urlReq.cachePolicy = .reloadIgnoringLocalCacheData
         urlReq.httpMethod = request.method
         urlReq.httpBody = request.body
         for (k, v) in request.headers {
@@ -123,7 +143,8 @@ class DataFetcher {
             // for the whole cache window.
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 finish(.failure(HTTPError(statusCode: http.statusCode,
-                                                 host: request.url.host ?? request.url.absoluteString)))
+                                         host: request.url.host ?? request.url.absoluteString,
+                                         retryAfter: Self.retryDelay(http.value(forHTTPHeaderField: "Retry-After")))))
                 return
             }
 

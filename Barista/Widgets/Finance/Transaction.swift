@@ -37,6 +37,10 @@ struct Transaction: Codable, Equatable, Identifiable {
 
     var note: String?
 
+    /// Cash transferred when this trade was recorded. Legacy trades omit it so
+    /// loading an existing portfolio never retroactively spends its saved cash.
+    var cashDelta: Double? = nil
+
     /// Positions carried over from before the ledger existed. Dated far enough
     /// back that any real trade logged later sorts after it and applies on top.
     static let openingDate = Date(timeIntervalSince1970: 946_684_800) // 2000-01-01
@@ -61,7 +65,7 @@ struct Transaction: Codable, Equatable, Identifiable {
         self.note = note
     }
 
-    enum CodingKeys: String, CodingKey { case id, date, symbol, kind, quantity, price, note }
+    enum CodingKeys: String, CodingKey { case id, date, symbol, kind, quantity, price, note, cashDelta }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -72,6 +76,7 @@ struct Transaction: Codable, Equatable, Identifiable {
         quantity = try c.decodeIfPresent(Double.self, forKey: .quantity) ?? 0
         price = try c.decodeIfPresent(Double.self, forKey: .price) ?? 0
         note = try c.decodeIfPresent(String.self, forKey: .note)
+        cashDelta = try c.decodeIfPresent(Double.self, forKey: .cashDelta)
     }
 }
 
@@ -88,6 +93,27 @@ struct LedgerState: Equatable {
 }
 
 enum Ledger {
+    /// Funded sales must remain backed by shares in chronological replay.
+    /// Legacy sales retain their historical clamping behavior during migration.
+    static func supportsFundedSales(_ transactions: [Transaction]) -> Bool {
+        var holdings: [String: Double] = [:]
+        let ordered = transactions.enumerated().sorted {
+            $0.element.date == $1.element.date ? $0.offset < $1.offset : $0.element.date < $1.element.date
+        }
+        for entry in ordered {
+            let trade = entry.element
+            let held = holdings[trade.symbol, default: 0]
+            switch trade.kind {
+            case .buy: holdings[trade.symbol] = held + max(0, trade.quantity)
+            case .adjustment: holdings[trade.symbol] = max(0, trade.quantity)
+            case .sell:
+                if trade.cashDelta != nil, trade.quantity > held { return false }
+                holdings[trade.symbol] = max(0, held - max(0, trade.quantity))
+            }
+        }
+        return true
+    }
+
     /// Replays the ledger to produce current share counts, average cost and
     /// realised profit.
     ///

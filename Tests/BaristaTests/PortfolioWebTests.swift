@@ -33,6 +33,21 @@ final class PortfolioWebTests: XCTestCase {
         XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: payload))
     }
 
+    func testSnapshotNetsAuthorizedNegativeCashAgainstPortfolioValue() throws {
+        let config = StockTickerConfig(symbols: ["AAA"], coins: [], holdings: ["AAA": 2], cash: -50)
+        let quote = MarketQuote(symbol: "AAA", price: 100, change: 0, kind: .stock, sparkline: [])
+
+        let payload = PortfolioWebSnapshot.make(config: config, quotes: [quote], indices: [])
+        let summary = try XCTUnwrap(payload["summary"] as? [String: Any])
+        let row = try XCTUnwrap((payload["quotes"] as? [[String: Any]])?.first)
+
+        XCTAssertEqual(summary["cash"] as? Double, -50)
+        XCTAssertEqual(summary["liveTotal"] as? Double, 150)
+        XCTAssertEqual(summary["regularTotal"] as? Double, 150)
+        XCTAssertEqual(try XCTUnwrap(row["weight"] as? Double), 200.0 / 150.0 * 100, accuracy: 0.0001)
+        XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: payload))
+    }
+
     func testPanelFitsSecondaryScreenWithNegativeCoordinates() {
         let screen = NSRect(x: -1440, y: 0, width: 1440, height: 900)
         let frame = StatusDropdownPanel.placement(anchor: NSRect(x: -20, y: 875, width: 20, height: 25),

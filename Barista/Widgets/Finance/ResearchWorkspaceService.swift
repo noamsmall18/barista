@@ -122,6 +122,7 @@ enum ResearchWorkspaceService {
 /// Quitting the parent doesn't terminate Process children or the browser session.
 enum ResearchWorkspaceLauncher {
     static func open() {
+        guard !AppPreferences.isRunningTests else { return }
         guard let resources = Bundle.main.resourceURL else { return }
         let name = AppFlavor.current.displayName
         let installed = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?

@@ -131,7 +131,7 @@ final class PortfolioWebServer {
             let intraday = widget.intradayPortfolioSeries() ?? []
             payload["intraday"] = intraday.map { [$0.date.timeIntervalSince1970, $0.value] }
             payload["benchmark"] = (widget.intradayBenchmarkSeries(matching: intraday.map(\.date), startingAt: intraday.first?.value ?? 0) ?? []).map { [$0.date.timeIntervalSince1970, $0.value] }
-            payload["history"] = PortfolioHistoryService.shared.points(for: widget.config.activePortfolioID, range: .all)
+            payload["history"] = PortfolioHistoryService.shared.points(for: widget.config.activePortfolioHistoryID, range: .all)
                 .map { [$0.time.timeIntervalSince1970, $0.value] }
             respond(connection, body: Self.json(payload), mime: "application/json")
             return

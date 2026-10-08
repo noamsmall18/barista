@@ -195,7 +195,7 @@ struct MenuBarAppearance: Codable, Equatable {
     private static let key = "barista.menuBarAppearance"
 
     static func load() -> MenuBarAppearance {
-        guard let data = UserDefaults.standard.data(forKey: key),
+        guard let data = AppPreferences.shared.data(forKey: key),
               let appearance = try? JSONDecoder().decode(MenuBarAppearance.self, from: data) else {
             return .default
         }
@@ -204,7 +204,7 @@ struct MenuBarAppearance: Codable, Equatable {
 
     func save() {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: MenuBarAppearance.key)
+            AppPreferences.shared.set(data, forKey: MenuBarAppearance.key)
         }
     }
 }

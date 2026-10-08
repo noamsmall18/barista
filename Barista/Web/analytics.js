@@ -12,12 +12,13 @@ const WorkspaceAnalytics = (() => {
     return clean.length && clean[0][1] > 0 ? clean.map(([t, v]) => [t, (v / clean[0][1] - 1) * 100]) : [];
   }
   function exposure(snapshot) {
-    if (!snapshot.summary.currencyComparable || !finite(snapshot.summary.liveTotal) || snapshot.summary.liveTotal <= 0) return null;
+    if (!snapshot.summary.currencyComparable || !finite(snapshot.summary.liveTotal) || snapshot.summary.liveTotal === 0) return null;
     const total = snapshot.summary.liveTotal;
     const held = snapshot.quotes.filter(q => q.quantity > 0 && finite(q.value) && q.value > 0)
       .map(q => ({symbol: q.symbol, value: q.value, weight: q.value / total * 100}))
       .sort((a, b) => b.value - a.value);
-    const cashWeight = Math.max(0, snapshot.summary.cash || 0) / total * 100;
+    const cash = finite(snapshot.summary.cash) ? snapshot.summary.cash : 0;
+    const cashWeight = cash / total * 100;
     const equityWeight = held.reduce((sum, q) => sum + q.weight, 0);
     const hhi = held.reduce((sum, q) => sum + (equityWeight > 0 ? q.weight / equityWeight : 0) ** 2, 0);
     return {held, cashWeight, topThree: held.slice(0, 3).reduce((sum, q) => sum + q.weight, 0), effectivePositions: hhi > 0 ? 1 / hhi : 0};

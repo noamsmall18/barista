@@ -103,6 +103,11 @@ final class PortfolioHistoryService {
         }
     }
 
+    /// Native app shutdown waits for records queued by widget.stop() before exit.
+    func flushPendingWrites() {
+        queue.sync(flags: .barrier) { }
+    }
+
     /// Thins history in three tiers rather than flattening everything old to a
     /// single daily point: recent days keep full detail, the last few months keep
     /// hourly shape so 1M and 3M still read as curves, and anything older keeps

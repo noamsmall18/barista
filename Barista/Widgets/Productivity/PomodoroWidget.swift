@@ -537,47 +537,47 @@ class PomodoroWidget: BaristaWidget {
     }
 
     private func saveFocusTime() {
-        UserDefaults.standard.set(totalFocusToday, forKey: "barista.pomodoro.focusToday")
-        UserDefaults.standard.set(dateString(), forKey: "barista.pomodoro.focusDate")
+        AppPreferences.shared.set(totalFocusToday, forKey: "barista.pomodoro.focusToday")
+        AppPreferences.shared.set(dateString(), forKey: "barista.pomodoro.focusDate")
     }
 
     private func saveState() {
-        UserDefaults.standard.set(dailyCompleted, forKey: "barista.pomodoro.dailyCompleted")
-        UserDefaults.standard.set(currentStreak, forKey: "barista.pomodoro.currentStreak")
-        UserDefaults.standard.set(bestStreak, forKey: "barista.pomodoro.bestStreak")
-        UserDefaults.standard.set(completedCycles, forKey: "barista.pomodoro.completedCycles")
+        AppPreferences.shared.set(dailyCompleted, forKey: "barista.pomodoro.dailyCompleted")
+        AppPreferences.shared.set(currentStreak, forKey: "barista.pomodoro.currentStreak")
+        AppPreferences.shared.set(bestStreak, forKey: "barista.pomodoro.bestStreak")
+        AppPreferences.shared.set(completedCycles, forKey: "barista.pomodoro.completedCycles")
 
         if let data = try? JSONEncoder().encode(sessionDurations) {
-            UserDefaults.standard.set(data, forKey: "barista.pomodoro.sessionDurations")
+            AppPreferences.shared.set(data, forKey: "barista.pomodoro.sessionDurations")
         }
         if let data = try? JSONEncoder().encode(dailyHistory) {
-            UserDefaults.standard.set(data, forKey: "barista.pomodoro.dailyHistory")
+            AppPreferences.shared.set(data, forKey: "barista.pomodoro.dailyHistory")
         }
     }
 
     private func restoreState() {
-        let savedDate = UserDefaults.standard.string(forKey: "barista.pomodoro.focusDate") ?? ""
+        let savedDate = AppPreferences.shared.string(forKey: "barista.pomodoro.focusDate") ?? ""
         let today = dateString()
         if savedDate == today {
-            totalFocusToday = UserDefaults.standard.integer(forKey: "barista.pomodoro.focusToday")
-            dailyCompleted = UserDefaults.standard.integer(forKey: "barista.pomodoro.dailyCompleted")
+            totalFocusToday = AppPreferences.shared.integer(forKey: "barista.pomodoro.focusToday")
+            dailyCompleted = AppPreferences.shared.integer(forKey: "barista.pomodoro.dailyCompleted")
         } else {
             // New day - push yesterday's count to daily history
-            let yesterdayCount = UserDefaults.standard.integer(forKey: "barista.pomodoro.dailyCompleted")
+            let yesterdayCount = AppPreferences.shared.integer(forKey: "barista.pomodoro.dailyCompleted")
             if yesterdayCount > 0 {
                 dailyHistory.append(Double(yesterdayCount))
                 while dailyHistory.count > 7 { dailyHistory.removeFirst() }
             }
         }
-        currentStreak = UserDefaults.standard.integer(forKey: "barista.pomodoro.currentStreak")
-        bestStreak = UserDefaults.standard.integer(forKey: "barista.pomodoro.bestStreak")
-        completedCycles = UserDefaults.standard.integer(forKey: "barista.pomodoro.completedCycles")
+        currentStreak = AppPreferences.shared.integer(forKey: "barista.pomodoro.currentStreak")
+        bestStreak = AppPreferences.shared.integer(forKey: "barista.pomodoro.bestStreak")
+        completedCycles = AppPreferences.shared.integer(forKey: "barista.pomodoro.completedCycles")
 
-        if let data = UserDefaults.standard.data(forKey: "barista.pomodoro.sessionDurations"),
+        if let data = AppPreferences.shared.data(forKey: "barista.pomodoro.sessionDurations"),
            let durations = try? JSONDecoder().decode([Double].self, from: data) {
             sessionDurations = durations
         }
-        if let data = UserDefaults.standard.data(forKey: "barista.pomodoro.dailyHistory"),
+        if let data = AppPreferences.shared.data(forKey: "barista.pomodoro.dailyHistory"),
            let history = try? JSONDecoder().decode([Double].self, from: data) {
             dailyHistory = history
         }
