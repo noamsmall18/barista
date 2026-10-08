@@ -15,6 +15,7 @@ enum FlavorMigration {
         "barista.activeWidgets",
         "barista.widgetMemory",
         "barista.portfolioHistory",
+        "barista.portfolioHistory.forgotten",
         "barista.stockTicker.lastGoodQuotes",
         "barista.stockTicker.earningsNotified",
         "barista.benchmarkCloses",

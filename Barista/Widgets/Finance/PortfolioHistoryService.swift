@@ -14,8 +14,14 @@ import Foundation
 /// Normally history only exists from the first run, since it depends on the
 /// holdings as they were at the time rather than on past prices alone. It can be
 /// reconstructed for a period the owner confirms their holdings did not change.
+///
+/// The menu-bar app and the research-workspace service both record into the
+/// same store at the same time, so every write re-reads what is stored and
+/// applies its one change on top, rather than saving this process's copy over
+/// whatever the other process added since. Forgotten portfolios leave a
+/// tombstone, so the other process can't bring their history back.
 final class PortfolioHistoryService {
-    static let shared = PortfolioHistoryService()
+    static let shared = PortfolioHistoryService(defaults: ResearchWorkspaceDefaults.shared)
 
     struct Point: Codable, Equatable {
         /// When the value was observed. Recent points carry a real time of day;
@@ -63,6 +69,9 @@ final class PortfolioHistoryService {
     }
 
     private static let storeKey = "barista.portfolioHistory"
+    /// Portfolio ids whose history was deleted, with when. Kept apart from the
+    /// series so the stored history keeps its original shape.
+    static let forgottenKey = "barista.portfolioHistory.forgotten"
     private static let retentionDays = 120
 
     /// How close together points may be while a day is still "recent". Ten
@@ -77,29 +86,37 @@ final class PortfolioHistoryService {
     /// rather than collapsing to one point per day.
     private static let hourlyDays = 95
 
+    /// A read cache of the store, refreshed by every write this process makes.
     private var series: [String: [Point]] = [:]
+    private let defaults: UserDefaults
     private let queue = DispatchQueue(label: "barista.portfolioHistory", attributes: .concurrent)
 
-    private init() { load() }
+    init(defaults: UserDefaults) {
+        self.defaults = defaults
+        load()
+    }
 
     // MARK: - Recording
 
     /// Records the current value for a portfolio. Cheap enough to call on every
     /// refresh: points closer together than `minimumSpacing` overwrite the last
     /// one rather than accumulating.
-    func record(portfolioID: String, value: Double) {
+    func record(portfolioID: String, value: Double, at now: Date = Date()) {
         guard value.isFinite, value > 0 else { return }
-        let now = Date()
 
         queue.async(flags: .barrier) {
-            var points = self.series[portfolioID] ?? []
-            if let last = points.last, now.timeIntervalSince(last.time) < Self.minimumSpacing {
-                points[points.count - 1] = Point(time: now, value: value)
-            } else {
-                points.append(Point(time: now, value: value))
+            self.update { stored, forgotten in
+                guard forgotten[portfolioID] == nil else { return }
+                var points = stored[portfolioID] ?? []
+                if let last = points.last, abs(now.timeIntervalSince(last.time)) < Self.minimumSpacing {
+                    // The other process may have stored a later sample since
+                    // this one was taken; keep whichever is newer.
+                    if now >= last.time { points[points.count - 1] = Point(time: now, value: value) }
+                } else {
+                    points.append(Point(time: now, value: value))
+                }
+                stored[portfolioID] = self.compact(points, now: now)
             }
-            self.series[portfolioID] = self.compact(points, now: now)
-            self.save()
         }
     }
 
@@ -142,10 +159,14 @@ final class PortfolioHistoryService {
     }
 
     /// Drops history for a portfolio that no longer exists.
+    /// Portfolio ids are never reused, so the tombstone is permanent: a process
+    /// still holding the old portfolio in its config can't record it back.
     func forget(portfolioID: String) {
         queue.async(flags: .barrier) {
-            self.series.removeValue(forKey: portfolioID)
-            self.save()
+            self.update { stored, forgotten in
+                forgotten[portfolioID] = Date()
+                stored.removeValue(forKey: portfolioID)
+            }
         }
     }
 
@@ -206,14 +227,43 @@ final class PortfolioHistoryService {
 
     // MARK: - Persistence
 
-    private func save() {
-        guard let data = try? JSONEncoder().encode(series) else { return }
-        ResearchWorkspaceDefaults.shared.set(data, forKey: Self.storeKey)
+    /// Applies one change to what is stored now, not to this process's copy, so
+    /// points the other process recorded since we last looked are kept. Must
+    /// run inside a barrier.
+    ///
+    /// Stored history that can't be decoded is left alone rather than replaced:
+    /// losing new samples is better than erasing the user's record.
+    private func update(_ change: (inout [String: [Point]], inout [String: Date]) -> Void) {
+        let readable = readSeries()
+        let storedForgotten = readForgotten()
+        var stored = readable ?? [:]
+        var forgotten = storedForgotten
+        change(&stored, &forgotten)
+        for id in forgotten.keys { stored.removeValue(forKey: id) }
+
+        if forgotten != storedForgotten, let data = try? JSONEncoder().encode(forgotten) {
+            defaults.set(data, forKey: Self.forgottenKey)
+        }
+        guard readable != nil, let data = try? JSONEncoder().encode(stored) else { return }
+        defaults.set(data, forKey: Self.storeKey)
+        series = stored
+    }
+
+    /// Nil only when something is stored but unreadable.
+    private func readSeries() -> [String: [Point]]? {
+        guard let data = defaults.data(forKey: Self.storeKey) else { return [:] }
+        return try? JSONDecoder().decode([String: [Point]].self, from: data)
+    }
+
+    private func readForgotten() -> [String: Date] {
+        guard let data = defaults.data(forKey: Self.forgottenKey),
+              let decoded = try? JSONDecoder().decode([String: Date].self, from: data) else { return [:] }
+        return decoded
     }
 
     private func load() {
-        guard let data = ResearchWorkspaceDefaults.shared.data(forKey: Self.storeKey),
-              let decoded = try? JSONDecoder().decode([String: [Point]].self, from: data) else { return }
+        guard var decoded = readSeries() else { return }
+        for id in readForgotten().keys { decoded.removeValue(forKey: id) }
         series = decoded
     }
 }

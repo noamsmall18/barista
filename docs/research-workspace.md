@@ -5,6 +5,12 @@ background process serves the browser and runs the same public-data services,
 quote refresh, earnings calendar, and portfolio history. It never creates a
 menu-bar item, settings window, or application delegate.
 
+When the menu-bar app is also running, both processes record portfolio history
+into the same preferences. Each write re-reads the stored history and adds its
+own sample on top, so neither process drops the other's points, and a deleted
+portfolio's history stays deleted (its id is kept in
+`barista.portfolioHistory.forgotten`).
+
 For a Marketbar workspace with no menu-bar app installed:
 
 ```sh

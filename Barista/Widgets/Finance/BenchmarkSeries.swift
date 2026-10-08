@@ -80,9 +80,8 @@ final class BenchmarkSeries {
         queue.async(flags: .barrier) {
             // Keep whatever we had rather than blanking the line on a failure.
             if !map.isEmpty {
-                self.dailyCloses[symbol] = map
+                self.save(symbol: symbol, map: map)
                 self.lastFetch[symbol] = Date()
-                self.save()
             }
             self.inFlight.remove(symbol)
             DispatchQueue.main.async { completion?() }
@@ -188,8 +187,14 @@ final class BenchmarkSeries {
 
     private static let storeKey = "barista.benchmarkCloses"
 
-    private func save() {
-        let encodable = dailyCloses.mapValues { inner in
+    /// The app and the research-workspace service share this cache, so a save
+    /// replaces only the symbol just fetched and keeps whatever the other
+    /// process stored for the rest.
+    private func save(symbol: String, map: [Date: Double]) {
+        var merged = readStored() ?? dailyCloses
+        merged[symbol] = map
+        dailyCloses = merged
+        let encodable = merged.mapValues { inner in
             inner.reduce(into: [String: Double]()) { acc, kv in
                 acc[String(kv.key.timeIntervalSinceReferenceDate)] = kv.value
             }
@@ -199,10 +204,14 @@ final class BenchmarkSeries {
     }
 
     private func load() {
+        if let stored = readStored() { dailyCloses = stored }
+    }
+
+    private func readStored() -> [String: [Date: Double]]? {
         guard let data = ResearchWorkspaceDefaults.shared.data(forKey: Self.storeKey),
               let decoded = try? JSONDecoder().decode([String: [String: Double]].self, from: data)
-        else { return }
-        dailyCloses = decoded.mapValues { inner in
+        else { return nil }
+        return decoded.mapValues { inner in
             inner.reduce(into: [Date: Double]()) { acc, kv in
                 if let t = Double(kv.key) {
                     acc[Date(timeIntervalSinceReferenceDate: t)] = kv.value
