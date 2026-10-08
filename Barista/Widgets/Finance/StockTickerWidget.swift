@@ -442,6 +442,10 @@ struct StockTickerConfig: Codable, Equatable {
     var lastIndividualPortfolioID: String? = nil
     // History is scoped to this widget, even when Barista has multiple tickers.
     var combinedPortfolioHistoryID: String = UUID().uuidString
+    /// Set when the history ID was absent at decode and had to be derived.
+    /// Not persisted; it tells the widget to write the ID back once, so the
+    /// combined chart keeps one series instead of starting over every launch.
+    var needsCombinedHistoryIDWriteBack = false
 
     var activePortfolioHistoryID: String {
         isCombinedPortfolioActive ? combinedPortfolioHistoryID : activePortfolioID
@@ -638,7 +642,6 @@ struct StockTickerConfig: Codable, Equatable {
         let stored = try c.decodeIfPresent([Portfolio].self, forKey: .portfolios) ?? []
         combinedPortfolioEnabled = try c.decodeIfPresent(Bool.self, forKey: .combinedPortfolioEnabled) ?? false
         lastIndividualPortfolioID = try c.decodeIfPresent(String.self, forKey: .lastIndividualPortfolioID)
-        combinedPortfolioHistoryID = try c.decodeIfPresent(String.self, forKey: .combinedPortfolioHistoryID) ?? UUID().uuidString
 
         if stored.isEmpty {
             let migrated = Portfolio(name: Portfolio.fallbackName,
@@ -651,6 +654,15 @@ struct StockTickerConfig: Codable, Equatable {
             let savedID = try c.decodeIfPresent(String.self, forKey: .activePortfolioID)
             activePortfolioID = (combinedPortfolioEnabled && savedID == Portfolio.combinedID)
                 ? Portfolio.combinedID : (stored.contains { $0.id == savedID } ? savedID! : stored[0].id)
+        }
+        // A missing ID is derived from the stored data rather than randomly, so
+        // every decode of the same config agrees on it - including the research
+        // service, which records history from its own copy and never saves config.
+        if let savedHistoryID = try c.decodeIfPresent(String.self, forKey: .combinedPortfolioHistoryID) {
+            combinedPortfolioHistoryID = savedHistoryID
+        } else {
+            combinedPortfolioHistoryID = "combined-" + portfolios[0].id
+            needsCombinedHistoryIDWriteBack = true
         }
         displayMode = try c.decodeIfPresent(TickerDisplayMode.self, forKey: .displayMode) ?? .scrolling
         colorMode = try c.decodeIfPresent(TickerColorMode.self, forKey: .colorMode) ?? .dynamic
@@ -1109,19 +1121,25 @@ class StockTickerWidget: BaristaWidget {
         refreshNow()
     }
 
+    /// Portfolios saved before the ledger existed get one seeded at decode, and
+    /// configs saved before the combined history ID existed get one derived.
+    /// Write them back once so the migration is permanent rather than redone on
+    /// every launch. Deferred a turn on purpose: WidgetInstance registers the
+    /// observer that actually persists config only after start() returns, so
+    /// saving synchronously here would post into an empty room.
+    func persistDecodeMigrationsIfNeeded() {
+        guard config.portfolios.contains(where: { $0.didSeedLedger }) || config.needsCombinedHistoryIDWriteBack
+        else { return }
+        for i in config.portfolios.indices { config.portfolios[i].didSeedLedger = false }
+        config.needsCombinedHistoryIDWriteBack = false
+        DispatchQueue.main.async { [weak self] in self?.saveConfig() }
+    }
+
     func start() {
         isRunning = true
         lifecycleGeneration += 1
         currentTimerInterval = effectiveRefreshInterval
-        // Portfolios saved before the ledger existed get one seeded at decode.
-        // Write it back once so the migration is permanent rather than redone on
-        // every launch. Deferred a turn on purpose: WidgetInstance registers the
-        // observer that actually persists config only after start() returns, so
-        // saving synchronously here would post into an empty room.
-        if config.portfolios.contains(where: { $0.didSeedLedger }) {
-            for i in config.portfolios.indices { config.portfolios[i].didSeedLedger = false }
-            DispatchQueue.main.async { [weak self] in self?.saveConfig() }
-        }
+        persistDecodeMigrationsIfNeeded()
         loadCachedQuotesIfNeeded()
         fetchAll(force: true)
         // Earnings dates change daily at most, and the service throttles itself.

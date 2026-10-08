@@ -80,6 +80,59 @@ final class CombinedPortfolioTests: XCTestCase {
         XCTAssertEqual(restored.cash, 100)
     }
 
+    /// A config saved without the combined history ID used to get a fresh
+    /// random one on every decode, so each launch recorded the combined chart
+    /// under a new series and the old ones were orphaned.
+    private func savedWithoutHistoryID() throws -> Data {
+        var config = config()
+        config.combinedPortfolioEnabled = true
+        config.activePortfolioID = Portfolio.combinedID
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as? [String: Any])
+        XCTAssertNotNil(saved.removeValue(forKey: "combinedPortfolioHistoryID"))
+        return try JSONSerialization.data(withJSONObject: saved)
+    }
+
+    func testMissingHistoryIDIsTheSameOnEveryLaunch() throws {
+        let saved = try savedWithoutHistoryID()
+        let firstLaunch = try JSONDecoder().decode(StockTickerConfig.self, from: saved)
+        let secondLaunch = try JSONDecoder().decode(StockTickerConfig.self, from: saved)
+        XCTAssertTrue(firstLaunch.isCombinedPortfolioActive)
+        XCTAssertEqual(firstLaunch.combinedPortfolioHistoryID, secondLaunch.combinedPortfolioHistoryID)
+        XCTAssertEqual(firstLaunch.activePortfolioHistoryID, firstLaunch.combinedPortfolioHistoryID)
+        XCTAssertFalse(firstLaunch.portfolios.contains { $0.id == firstLaunch.combinedPortfolioHistoryID },
+                       "Combined history must not share a series with an individual portfolio")
+        XCTAssertNotEqual(firstLaunch.combinedPortfolioHistoryID, Portfolio.combinedID)
+        XCTAssertTrue(firstLaunch.needsCombinedHistoryIDWriteBack)
+
+        let current = try JSONDecoder().decode(StockTickerConfig.self, from: JSONEncoder().encode(config()))
+        XCTAssertFalse(current.needsCombinedHistoryIDWriteBack, "A saved ID needs no write-back")
+    }
+
+    func testDerivedHistoryIDIsWrittenBackOnceAndSurvivesLaterEdits() throws {
+        let decoded = try JSONDecoder().decode(StockTickerConfig.self, from: savedWithoutHistoryID())
+        let launched = widget(decoded)
+        let historyID = launched.config.combinedPortfolioHistoryID
+        let saved = expectation(forNotification: .baristaWidgetConfigChanged, object: launched)
+        launched.persistDecodeMigrationsIfNeeded()
+        wait(for: [saved], timeout: 1)
+        XCTAssertFalse(launched.config.needsCombinedHistoryIDWriteBack)
+
+        // Next launch reads what was written back, and keeps the same series even
+        // after the portfolio the ID was derived from is deleted.
+        var relaunched = try JSONDecoder().decode(StockTickerConfig.self, from: JSONEncoder().encode(launched.config))
+        XCTAssertEqual(relaunched.combinedPortfolioHistoryID, historyID)
+        XCTAssertFalse(relaunched.needsCombinedHistoryIDWriteBack)
+        relaunched.portfolios.removeFirst()
+        let afterDelete = try JSONDecoder().decode(StockTickerConfig.self, from: JSONEncoder().encode(relaunched))
+        XCTAssertEqual(afterDelete.combinedPortfolioHistoryID, historyID)
+
+        let unchanged = widget(relaunched)
+        let noSave = expectation(forNotification: .baristaWidgetConfigChanged, object: unchanged)
+        noSave.isInverted = true
+        unchanged.persistDecodeMigrationsIfNeeded()
+        wait(for: [noSave], timeout: 0.3)
+    }
+
     func testCombinedCannotBeEditedAndSourceEditsUpdateSnapshotAutomatically() throws {
         let widget = widget()
         widget.setCombinedPortfolioEnabled(true)
