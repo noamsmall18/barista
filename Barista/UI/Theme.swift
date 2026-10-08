@@ -1,9 +1,19 @@
 import Cocoa
 
 struct Theme {
-    // Brand colors from logo
-    static let brandAmber = NSColor(red: 0.96, green: 0.655, blue: 0.231, alpha: 1)      // #f5a73b
-    static let brandAmberBright = NSColor(red: 0.973, green: 0.722, blue: 0.306, alpha: 1) // #f8b84e
+    // Marketbar uses emerald from its glass-prism identity; Barista keeps amber.
+    static let brandAmber: NSColor = {
+        switch AppFlavor.current {
+        case .marketbar: return NSColor(red: 0.08, green: 0.93, blue: 0.62, alpha: 1) // #14ed9e
+        case .barista: return NSColor(red: 0.96, green: 0.655, blue: 0.231, alpha: 1) // #f5a73b
+        }
+    }()
+    static let brandAmberBright: NSColor = {
+        switch AppFlavor.current {
+        case .marketbar: return NSColor(red: 0.36, green: 1.0, blue: 0.78, alpha: 1) // #5cffc7
+        case .barista: return NSColor(red: 0.973, green: 0.722, blue: 0.306, alpha: 1) // #f8b84e
+        }
+    }()
     static let brandCyan = NSColor(red: 0.365, green: 0.878, blue: 0.902, alpha: 1)       // #5de0e6
     static let brandCyanBright = NSColor(red: 0.478, green: 0.91, blue: 0.929, alpha: 1)  // #7ae8ed
 
@@ -26,9 +36,9 @@ struct Theme {
     static let textFaint = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.58)
     static let textGhost = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 0.46)
 
-    // Accent - amber from logo
+    // Primary accent follows the active product identity.
     static let accent = brandAmber
-    static let accentBg = NSColor(red: 0.96, green: 0.655, blue: 0.231, alpha: 0.10)
+    static let accentBg = brandAmber.withAlphaComponent(0.10)
 
     // Status colors
     static let green = NSColor(red: 0.49, green: 0.847, blue: 0.627, alpha: 1)            // #7cd8a0
@@ -83,7 +93,7 @@ struct Theme {
     // MARK: - Semantic Colors
 
     static let success = green
-    static let warning = brandAmber
+    static let warning = NSColor(red: 0.95, green: 0.82, blue: 0.35, alpha: 1)
     static let danger = red
     static let info = brandCyan
 

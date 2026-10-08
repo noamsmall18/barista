@@ -6,7 +6,7 @@
   --text: #25352e;
   --muted: #6c756c;
   --line: #d7d9cd;
-  --accent: #c64d2d;
+  --accent: #16865f;
   --green: #27765c;
   --red: #b94236;
   --blue: #416f89;
@@ -37,7 +37,7 @@ h3 { font-size: 15px; font-weight: 600; }
 .neutral { color: var(--muted); }
 .app-rail { position: fixed; inset: 0 auto 0 0; z-index: 15; width: var(--rail); padding: 30px 18px 20px; background: #162720; color: #eaece0; display: flex; flex-direction: column; border-right: 1px solid #314137; }
 .wordmark { font-size: 20px; letter-spacing: -.7px; font-weight: 600; display: flex; align-items: center; gap: 9px; margin-bottom: 55px; }
-.logo-glyph { position: relative; font-family: Georgia, serif; font-size: 36px; line-height: 1; color: #dfb978; }
+.logo-glyph { position: relative; font-family: Georgia, serif; font-size: 36px; line-height: 1; color: #5cffc7; }
 .logo-glyph span { font: 15px sans-serif; position: absolute; top: -3px; right: -7px; }
 .app-rail nav { display: grid; gap: 8px; }
 .app-rail nav a { padding: 11px 10px; border-radius: 4px; display: grid; grid-template-columns: 20px 1fr 12px; align-items: center; gap: 10px; color: #aebcb1; font-weight: 500; }
