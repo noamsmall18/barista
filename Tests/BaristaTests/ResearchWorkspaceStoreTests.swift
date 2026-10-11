@@ -4,7 +4,8 @@ import XCTest
 final class ResearchWorkspaceStoreTests: XCTestCase {
     private func isolatedDefaults() -> (UserDefaults, String) {
         let name = "barista.tests.research.\(UUID().uuidString)"
-        return (UserDefaults(suiteName: name)!, name)
+        // In-memory, so a test run leaves nothing behind in ~/Library/Preferences.
+        return (InMemoryTestPreferences(suiteName: name)!, name)
     }
 
     func testNotesAndPreferencesPersistWithoutReplacingOtherSymbols() throws {

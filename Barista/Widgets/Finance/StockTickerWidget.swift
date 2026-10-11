@@ -37,6 +37,7 @@ struct MarketQuote: Codable, Equatable {
         case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
+        case overnightPrice, overnightChange, overnightTradeTime
         case regularStart, regularEnd
     }
     var marketCap: Double?
@@ -50,6 +51,13 @@ struct MarketQuote: Codable, Equatable {
     var preMarketChange: Double?
     var postMarketPrice: Double?
     var postMarketChange: Double?
+    /// Last overnight-session print (8 PM to 4 AM ET) and its move from the
+    /// regular close. Only set while that session is running.
+    var overnightPrice: Double?
+    var overnightChange: Double?
+    /// When the overnight print traded, as Unix seconds. Only the secondary
+    /// feed reports it; nil means the age of the print is unknown.
+    var overnightTradeTime: Double?
     var marketState: String?
 
     /// Regular-session window for this quote's day, as Unix seconds. Carried on
@@ -120,8 +128,17 @@ struct MarketQuote: Codable, Equatable {
     /// morning's move, measured from the previous close, and the previous day's
     /// session is never appended to it.
     var chartSegments: (points: [Double], breakIndex: Int?) {
-        let status = kind == .crypto ? MarketStatus.open : marketStatus
-        let (session, extended) = sessionSplit.series(for: status)
+        chartSegments(during: kind == .crypto ? MarketStatus.open : marketStatus)
+    }
+
+    /// Takes the phase and the clock as arguments so each session's chart can
+    /// be checked without waiting for it.
+    func chartSegments(during status: MarketStatus, now: Date = Date()) -> (points: [Double], breakIndex: Int?) {
+        // Early in pre-market the feed can still be serving the finished day.
+        // Those bars are the last session, not this morning, so they are drawn
+        // as that session rather than relabelled as a pre-market move.
+        let barsAreLastSession = status == .preMarket && regularEnd > 0 && now.timeIntervalSince1970 >= regularEnd
+        let (session, extended) = sessionSplit.series(for: barsAreLastSession ? .closed : status)
         var sessionPoints = session.closes.filter { $0.isFinite && $0 > 0 }
         var extendedPoints = extended.closes.filter { $0.isFinite && $0 > 0 }
 
@@ -147,7 +164,11 @@ struct MarketQuote: Codable, Equatable {
 
         // Pin the newest point to the live price so the line ends where the
         // number beside it says it does.
-        if !extendedPoints.isEmpty, let ext = extendedHours, ext.price > 0 {
+        if status == .overnight, let ext = extendedHours(during: status), ext.price > 0 {
+            // Overnight has no bars of its own, so its print extends the tail
+            // rather than overwriting the last after-hours bar.
+            extendedPoints.append(ext.price)
+        } else if !extendedPoints.isEmpty, let ext = extendedHours(during: status), ext.price > 0 {
             extendedPoints[extendedPoints.count - 1] = ext.price
         } else if !sessionPoints.isEmpty, price > 0 {
             sessionPoints[sessionPoints.count - 1] = price
@@ -199,11 +220,19 @@ struct MarketQuote: Codable, Equatable {
     }
 
     var extendedHours: (price: Double, change: Double, label: String)? {
-        switch marketStatus {
+        extendedHours(during: marketStatus)
+    }
+
+    /// Takes the phase as an argument so each session's print can be checked
+    /// without waiting for the clock to reach it.
+    func extendedHours(during status: MarketStatus) -> (price: Double, change: Double, label: String)? {
+        switch status {
         case .preMarket:
             if let p = preMarketPrice, let c = preMarketChange { return (p, c, "Pre") }
         case .afterHours:
             if let p = postMarketPrice, let c = postMarketChange { return (p, c, "AH") }
+        case .overnight:
+            if let p = overnightPrice, let c = overnightChange { return (p, c, "Ovn") }
         case .closed:
             return nil
         case .open:
@@ -308,7 +337,7 @@ struct PortfolioSnapshot {
         return extendedPL / total * 100
     }
 
-    /// "Pre-market" or "After hours", taken from whichever phase the held
+    /// "Pre-market", "After hours" or "Overnight", taken from whichever phase the held
     /// positions are actually reporting.
     var extendedLabel: String? {
         for p in positions {
@@ -316,6 +345,7 @@ struct PortfolioSnapshot {
             switch p.quote.marketStatus {
             case .preMarket:  return "Pre-market"
             case .afterHours: return "After hours"
+            case .overnight:  return "Overnight"
             default:          continue
             }
         }
@@ -590,6 +620,15 @@ struct StockTickerConfig: Codable, Equatable {
         priceAlerts: [:]
     )
 
+    // MARK: Which settings the current modes actually read
+    //
+    // Controls for a setting nothing is reading are hidden rather than left
+    // inert, so the dropdown only offers choices that change something.
+
+    var usesTickerWidth: Bool { displayMode == .scrolling || displayMode == .sparkline }
+    var usesScrollSpeed: Bool { displayMode == .scrolling }
+    var usesRefreshInterval: Bool { refreshMode == .standard }
+
     enum CodingKeys: String, CodingKey {
         case portfolios, activePortfolioID, combinedPortfolioEnabled, lastIndividualPortfolioID, combinedPortfolioHistoryID
         case symbols, coins, holdings, cash, scrollSpeed, coloredTicker, refreshInterval, refreshMode
@@ -839,9 +878,9 @@ class StockTickerWidget: BaristaWidget {
         return dashboardLeaseUntil > Date() ? 2 : max(2, config.refreshInterval)
     }
 
-    /// How often equities are worth re-fetching. Prices only move while the
-    /// exchange is open, so polling every few seconds overnight buys nothing and
-    /// is what gets the app throttled.
+    /// How often equities are worth re-fetching. Prices only move while a
+    /// session is trading, so polling every few seconds over a weekend buys
+    /// nothing and is what gets the app throttled.
     private var stockRefreshInterval: TimeInterval {
         stockInterval(during: MarketStatus.current())
     }
@@ -855,7 +894,7 @@ class StockTickerWidget: BaristaWidget {
         if detailLeaseCount > 0 { return base }
         switch status {
         case .open:                   return base
-        case .preMarket, .afterHours: return config.refreshMode == .ultraFast ? max(base * 3, 6) : max(base * 3, 15)
+        case .preMarket, .afterHours, .overnight: return config.refreshMode == .ultraFast ? max(base * 3, 6) : max(base * 3, 15)
         case .closed:                 return max(base * 12, 300)
         }
     }
@@ -1513,8 +1552,13 @@ class StockTickerWidget: BaristaWidget {
     private var lastCryptoFetch: Date?
 
     private func fetchAll(force: Bool = false) {
-        // A user refresh also respects the provider's active cooldown.
-        guard !isBackingOff else { return }
+        // A user refresh also respects the provider's active cooldown. While
+        // the stock feed is the one cooling down, the backup feed keeps
+        // prices moving.
+        guard !isBackingOff else {
+            if rateLimitedHost?.contains("yahoo") == true { fetchSecondaryQuotes(asFallback: true) }
+            return
+        }
         refreshCryptoStream()
 
         let now = Date()
@@ -1533,10 +1577,134 @@ class StockTickerWidget: BaristaWidget {
             lastStockFetch = now
             for s in config.symbols { fetchStock(symbol: s, force: force) }
             for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
+            if MarketStatus.current() == .overnight {
+                fetchSecondaryQuotes(asFallback: false)
+                fetchOvernightBarsIfDue()
+            }
         }
         if cryptoDue, !restCryptoIDs.isEmpty {
             lastCryptoFetch = now
             fetchCrypto(coins: restCryptoIDs, force: force)
+        }
+    }
+
+    // MARK: - Secondary feed
+
+    private var lastSecondaryFetch: Date?
+    private var secondaryInFlight = false
+    private var secondaryPausedUntil: Date?
+    private var lastOvernightBarsFetch: Date?
+    private var overnightPrints: [String: SecondaryQuote] = [:]
+    private var overnightPrintsAt: Date?
+    private var overnightBars: [String: SessionSeries] = [:]
+
+    private var secondarySymbols: [String] {
+        config.symbols + Self.indexSymbols.filter { !config.symbols.contains($0) }
+    }
+
+    /// One request covers every symbol. As a fallback it replaces the session's
+    /// price on quotes the stock feed could not refresh; otherwise it only
+    /// adds overnight trade times to quotes the stock feed did deliver.
+    private func fetchSecondaryQuotes(asFallback: Bool) {
+        let now = Date()
+        let status = MarketStatus.current(at: now)
+        guard isRunning, !secondaryInFlight, status != .closed else { return }
+        if let secondaryPausedUntil, secondaryPausedUntil > now { return }
+        if let lastSecondaryFetch, now.timeIntervalSince(lastSecondaryFetch) < 10 { return }
+        let symbols = secondarySymbols
+        guard let url = SecondaryQuoteSource.quotesURL(symbols: symbols, overnight: status == .overnight) else { return }
+        lastSecondaryFetch = now
+        secondaryInFlight = true
+        let generation = lifecycleGeneration
+        DataFetcher.shared.fetch(url: url, maxAge: 5, allowStaleCache: false) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.secondaryInFlight = false
+                guard self.isRunning, self.lifecycleGeneration == generation else { return }
+                switch result {
+                case .failure:
+                    // Undocumented endpoint: if it stops answering, leave it alone for a while.
+                    self.secondaryPausedUntil = Date().addingTimeInterval(600)
+                case .success(let data):
+                    self.applySecondary(SecondaryQuoteSource.parseQuotes(data, symbols: symbols),
+                                        status: status, asFallback: asFallback)
+                }
+            }
+        }
+    }
+
+    private func fetchOvernightBarsIfDue() {
+        let now = Date()
+        if let secondaryPausedUntil, secondaryPausedUntil > now { return }
+        if let lastOvernightBarsFetch, now.timeIntervalSince(lastOvernightBarsFetch) < 300 { return }
+        let symbols = secondarySymbols
+        guard isRunning, let url = SecondaryQuoteSource.overnightBarsURL(symbols: symbols) else { return }
+        lastOvernightBarsFetch = now
+        let generation = lifecycleGeneration
+        DataFetcher.shared.fetch(url: url, maxAge: 60, allowStaleCache: false) { [weak self] result in
+            guard case .success(let data) = result else { return }
+            let bars = SecondaryQuoteSource.parseOvernightBars(data, symbols: symbols)
+            DispatchQueue.main.async {
+                guard let self, self.isRunning, self.lifecycleGeneration == generation else { return }
+                self.overnightBars = bars
+            }
+        }
+    }
+
+    func applySecondary(_ backups: [String: SecondaryQuote], status: MarketStatus, asFallback: Bool) {
+        guard !backups.isEmpty else { return }
+        if status == .overnight {
+            overnightPrints = backups
+            overnightPrintsAt = Date()
+        }
+        var changed = false
+        func update(_ list: inout [MarketQuote]) {
+            for index in list.indices where list[index].kind == .stock {
+                guard backups[list[index].symbol] != nil else { continue }
+                var quote = list[index]
+                if asFallback, let backup = backups[quote.symbol],
+                   let patched = SecondaryQuoteSource.apply(backup, to: quote, status: status) {
+                    quote = patched
+                    failedSymbols.remove(quote.symbol)
+                } else {
+                    mergeOvernight(into: &quote, status: status)
+                }
+                guard quote != list[index] else { continue }
+                if asFallback { checkPriceAlert(for: quote) }
+                list[index] = quote
+                changed = true
+            }
+        }
+        update(&quotes)
+        update(&indexQuotes)
+        guard changed else { return }
+        if asFallback {
+            lastFetchFailed = false
+            isUsingCachedData = false
+            lastUpdated = Date()
+        }
+        saveQuoteCache()
+        onDisplayUpdate?()
+        notifyDataRefresh()
+    }
+
+    /// Adds what only the secondary feed knows about the overnight session:
+    /// when the print traded, and the bars leading up to it. Its price replaces
+    /// the stock feed's only while it is fresh, since it is the dated one.
+    private func mergeOvernight(into quote: inout MarketQuote, status: MarketStatus? = nil) {
+        guard quote.kind == .stock, (status ?? quote.marketStatus) == .overnight else { return }
+        if let overnightPrintsAt, Date().timeIntervalSince(overnightPrintsAt) < 90,
+           let backup = overnightPrints[quote.symbol], let price = backup.extendedTrade, quote.price > 0 {
+            quote.overnightPrice = price
+            quote.overnightChange = percentChange(from: quote.price, to: price)
+            quote.overnightTradeTime = backup.extendedTradeTime
+        }
+        if let bars = overnightBars[quote.symbol], quote.minuteTimes.count == quote.minuteCloses.count {
+            let after = quote.minuteTimes.last ?? 0
+            for (index, time) in bars.times.enumerated() where time > after {
+                quote.minuteTimes.append(time)
+                quote.minuteCloses.append(bars.closes[index])
+            }
         }
     }
 
@@ -1557,6 +1725,7 @@ class StockTickerWidget: BaristaWidget {
                 DispatchQueue.main.async {
                     self.inFlightStocks.remove(symbol)
                     self.noteFetchFailure(error)
+                    self.fetchSecondaryQuotes(asFallback: true)
                     // A throttled host is a whole-feed problem, not a bad ticker,
                     // so don't brand the symbol as failed for it.
                     if !self.isBackingOff { self.failedSymbols.insert(symbol) }
@@ -1626,6 +1795,15 @@ class StockTickerWidget: BaristaWidget {
                 regularStart = marketInt(reg["start"]) ?? 0
                 regularEnd = marketInt(reg["end"]) ?? 0
             }
+
+            // After midnight `currentTradingPeriod` already describes the coming
+            // day while the bars are still the last one's, which would file a
+            // whole finished day as pre-market. `tradingPeriods` describes the
+            // bars themselves, so the chart is split by that. Price selection
+            // below keeps using the current period, where a stale bar must not
+            // be mistaken for this session's print.
+            let barBoundaries = SessionSplitter.barBoundaries(meta: meta)
+                ?? .init(regularStart: Double(regularStart), regularEnd: Double(regularEnd))
 
             let previousClose = marketDouble(meta["chartPreviousClose"])
                 ?? marketDouble(meta["previousClose"])
@@ -1730,12 +1908,17 @@ class StockTickerWidget: BaristaWidget {
                 postChgPct = percentChange(from: price, to: pp)
             }
 
+            let overnightPrice = OvernightPrice.select(meta: meta, status: quoteStatus)
+            let overnightChgPct = overnightPrice.map { percentChange(from: price, to: $0) }
+
             let displayTail: Double
             switch quoteStatus {
             case .preMarket:
                 displayTail = prePrice ?? price
             case .afterHours:
                 displayTail = postPrice ?? price
+            case .overnight:
+                displayTail = overnightPrice ?? price
             case .open, .closed:
                 displayTail = price
             }
@@ -1753,20 +1936,24 @@ class StockTickerWidget: BaristaWidget {
                                 postMarketPrice: postPrice, postMarketChange: postChgPct,
                                 marketState: marketState)
             q.currency = meta["currency"] as? String
+            q.overnightPrice = overnightPrice
+            q.overnightChange = overnightChgPct
             q.receivedAt = Date().timeIntervalSince1970
             q.source = "Yahoo Finance"
-            q.regularStart = Double(regularStart)
-            q.regularEnd = Double(regularEnd)
+            q.regularStart = barBoundaries.regularStart
+            q.regularEnd = barBoundaries.regularEnd
             q.sparklineTimes = sparkTimes.count == sparkline.count ? sparkTimes : []
             q.minuteCloses = fullCloses
             q.minuteTimes = fullTimes
             DispatchQueue.main.async {
                 guard self.isRunning, self.lifecycleGeneration == generation else { return }
                 guard isIndex || self.config.symbols.contains(symbol) else { return }
+                var q = q
+                self.mergeOvernight(into: &q)
                 self.failedSymbols.remove(symbol)
                 self.lastFetchFailed = false
                 self.isUsingCachedData = false
-                self.checkPriceAlert(symbol: symbol, newPrice: q.currentPrice)
+                self.checkPriceAlert(for: q)
                 if isIndex {
                     self.indexQuotes.removeAll { $0.symbol == symbol }
                     self.indexQuotes.append(q)
@@ -1782,7 +1969,6 @@ class StockTickerWidget: BaristaWidget {
                         self.indexQuotes.append(q)
                     }
                 }
-                self.previousPrices[symbol] = q.currentPrice
                 self.lastUpdated = Date()
                 self.noteFetchSuccess()
                 self.saveQuoteCache()
@@ -2023,6 +2209,18 @@ class StockTickerWidget: BaristaWidget {
         value == value.rounded()
             ? String(Int(value))
             : String(format: "%g", value)
+    }
+
+    /// Compares the quote with the last price alerts were allowed to see.
+    ///
+    /// Overnight prints are skipped entirely, including as the remembered
+    /// price: the session is thin enough for one odd trade to cross a target,
+    /// and a level that genuinely broke overnight still fires on the first
+    /// pre-market print because the comparison starts from the evening close.
+    private func checkPriceAlert(for quote: MarketQuote) {
+        guard quote.marketStatus.firesPriceAlerts else { return }
+        defer { previousPrices[quote.symbol] = quote.currentPrice }
+        checkPriceAlert(symbol: quote.symbol, newPrice: quote.currentPrice)
     }
 
     private func checkPriceAlert(symbol: String, newPrice: Double) {

@@ -99,3 +99,71 @@ final class DropdownRefreshModeTests: XCTestCase {
         XCTAssertTrue(labels.contains { ["Offline", "Loading"].contains($0.stringValue) })
     }
 }
+
+@MainActor
+final class DropdownRelevantSettingsTests: XCTestCase {
+    private func allViews(_ root: NSView) -> [NSView] {
+        [root] + root.subviews.flatMap(allViews)
+    }
+
+    private func has(_ action: String, in content: NSView) -> Bool {
+        allViews(content).compactMap { $0 as? NSControl }.contains { $0.action == NSSelectorFromString(action) }
+    }
+
+    private func dropdown(mode: TickerDisplayMode, refresh: StockTickerRefreshMode = .standard)
+        -> (widget: StockTickerWidget, controller: MarketPopoverController, content: NSView) {
+        _ = NSApplication.shared
+        var config = StockTickerConfig(symbols: ["AAPL"], coins: [])
+        config.displayMode = mode
+        config.refreshMode = refresh
+        let widget = StockTickerWidget(
+            config: config, notificationsEnabled: false,
+            initialQuotes: [MarketQuote(symbol: "AAPL", price: 225, change: 1.8, kind: .stock, sparkline: [])]
+        )
+        let controller = MarketPopoverController(widget: widget, fetchesDetailData: false)
+        return (widget, controller, controller.buildView())
+    }
+
+    func testEachDisplayModeOffersOnlyTheSettingsItReads() {
+        let expected: [(TickerDisplayMode, width: Bool, speed: Bool)] = [
+            (.scrolling, true, true), (.sparkline, true, false),
+            (.focused, false, false), (.compact, false, false), (.portfolio, false, false),
+        ]
+        for (mode, width, speed) in expected {
+            let (_, controller, content) = dropdown(mode: mode)
+            XCTAssertEqual(has("widthChanged:", in: content), width, "width in \(mode)")
+            XCTAssertEqual(has("speedChanged:", in: content), speed, "speed in \(mode)")
+            XCTAssertTrue(has("displayModeChanged:", in: content), "mode picker always stays")
+            _ = controller
+        }
+    }
+
+    func testSwitchingModeInTheOpenDropdownRemovesAndRestoresScrollControls() throws {
+        let (widget, controller, content) = dropdown(mode: .scrolling)
+        XCTAssertTrue(has("speedChanged:", in: content))
+
+        // Tag 4 is Folio, tag 0 is Scroll.
+        func modeButton(_ tag: Int) throws -> NSButton {
+            try XCTUnwrap(allViews(content).compactMap { $0 as? NSButton }.first {
+                $0.action == NSSelectorFromString("displayModeChanged:") && $0.tag == tag
+            })
+        }
+        try modeButton(4).performClick(nil)
+        XCTAssertEqual(widget.config.displayMode, .portfolio)
+        XCTAssertFalse(has("speedChanged:", in: content))
+        XCTAssertFalse(has("widthChanged:", in: content))
+
+        try modeButton(0).performClick(nil)
+        XCTAssertEqual(widget.config.displayMode, .scrolling)
+        XCTAssertTrue(has("speedChanged:", in: content))
+        XCTAssertTrue(has("widthChanged:", in: content))
+        _ = controller
+    }
+
+    func testRefreshIntervalChoiceIsHiddenWhileUltraFastSetsTheCadence() {
+        XCTAssertTrue(has("refreshChanged:", in: dropdown(mode: .scrolling, refresh: .standard).content))
+        let ultra = dropdown(mode: .scrolling, refresh: .ultraFast)
+        XCTAssertFalse(has("refreshChanged:", in: ultra.content))
+        XCTAssertTrue(has("refreshModeChanged:", in: ultra.content), "the way back to Standard stays")
+    }
+}

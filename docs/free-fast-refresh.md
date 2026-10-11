@@ -34,6 +34,39 @@ provider's `Retry-After` delay. Pressing Refresh does not bypass an active
 cooldown. Turning Ultra-fast off closes the stream and restores Standard mode.
 Faster polling uses more network traffic and energy.
 
+## Overnight prices
+
+From 8 PM to 4 AM ET, Sunday night through Friday morning, US stocks and ETFs
+show an **Ovn** price and an **Overnight** move measured from the regular close.
+The price is the `fulldayPrice` field in the Yahoo chart response the app
+already downloads, so it needs no key, account, or extra request. It reflects
+trades on overnight venues such as Blue Ocean ATS, where volume is thin and
+spreads are wide.
+
+Yahoo gives that field no timestamp, so a second free, keyless feed
+(Robinhood's public quote endpoint) adds the time of the last overnight trade
+and five-minute overnight bars for the row chart. The quote's tooltip shows how
+old the print is. Indexes, futures, OTC and non-US listings have no overnight
+venue and keep their closing price. Overnight polling uses the extended-hours
+cadence.
+
+Price alerts ignore overnight prints. A level that breaks overnight fires on the
+first pre-market trade instead.
+
+## Backup stock feed
+
+When Yahoo rate-limits or fails, the same Robinhood endpoint keeps US stock and
+ETF prices moving for the session in progress: one request covers the whole
+watchlist. Quotes it supplied are labelled with that provider. It is public but
+undocumented, so a failure there pauses it for ten minutes and the app carries
+on with what it has. No data source used by the app needs a paid plan, an
+account, or an API key.
+
+## Market calendar
+
+The session clock knows NYSE and Nasdaq holidays and 1 PM early closes from the
+exchanges' standing rules. One-off closures are not known in advance.
+
 ## Native window improvements
 
 The portfolio view now includes market ETF quotes, cost-based returns, allocation

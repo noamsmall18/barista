@@ -1097,7 +1097,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case "stock-ticker":
             let stockWidget = instance.widget.underlying(as: StockTickerWidget.self)
             let quoteCount = max(stockWidget?.quotes.count ?? 0, 1)
-            return 76 + CGFloat(quoteCount) * 56 + 52 + 190 + 34
+            let config = stockWidget?.config
+            let hiddenRows = [config?.usesScrollSpeed, config?.usesTickerWidth, config?.usesRefreshInterval]
+                .filter { $0 == false }.count
+            return 76 + CGFloat(quoteCount) * 56 + 52 + 190 + 34 - CGFloat(hiddenRows) * 36
         case "cpu-monitor": return 310
         case "ram-monitor": return 520
         case "network-speed": return 480
@@ -1417,18 +1420,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panel.addSubview(settingsLabel)
         y -= 24
 
-        // Scroll Speed slider
-        let speedRow = makeSettingRow(label: "Scroll Speed", y: y, inset: inset, width: cardW)
-        let speedSlider = NSSlider(frame: NSRect(x: inset + cardW / 2, y: y - 20, width: cardW / 2, height: 20))
-        speedSlider.minValue = 0.1
-        speedSlider.maxValue = 2.0
-        speedSlider.doubleValue = stockWidget.config.scrollSpeed
-        speedSlider.target = self
-        speedSlider.action = #selector(stockSpeedChanged(_:))
-        speedSlider.identifier = NSUserInterfaceItemIdentifier("speedSlider:\(instance.id.uuidString)")
-        panel.addSubview(speedRow)
-        panel.addSubview(speedSlider)
-        y -= 36
+        // Rows for settings the current modes do not read are left out; see
+        // StockTickerConfig.usesScrollSpeed and its neighbours.
+        if stockWidget.config.usesScrollSpeed {
+            let speedRow = makeSettingRow(label: "Scroll Speed", y: y, inset: inset, width: cardW)
+            let speedSlider = NSSlider(frame: NSRect(x: inset + cardW / 2, y: y - 20, width: cardW / 2, height: 20))
+            speedSlider.minValue = 0.1
+            speedSlider.maxValue = 2.0
+            speedSlider.doubleValue = stockWidget.config.scrollSpeed
+            speedSlider.target = self
+            speedSlider.action = #selector(stockSpeedChanged(_:))
+            speedSlider.identifier = NSUserInterfaceItemIdentifier("speedSlider:\(instance.id.uuidString)")
+            panel.addSubview(speedRow)
+            panel.addSubview(speedSlider)
+            y -= 36
+        }
 
         // Colored Ticker toggle
         let colorRow = makeSettingRow(label: "Colored Ticker", y: y, inset: inset, width: cardW)
@@ -1442,33 +1448,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         y -= 36
 
         // Ticker Width slider
-        let widthRow = makeSettingRow(label: "Ticker Width", y: y, inset: inset, width: cardW)
-        let widthSlider = NSSlider(frame: NSRect(x: inset + cardW / 2, y: y - 20, width: cardW / 2, height: 20))
-        widthSlider.minValue = 80
-        widthSlider.maxValue = 400
-        widthSlider.doubleValue = stockWidget.config.tickerWidth
-        widthSlider.target = self
-        widthSlider.action = #selector(stockWidthChanged(_:))
-        widthSlider.identifier = NSUserInterfaceItemIdentifier("widthSlider:\(instance.id.uuidString)")
-        panel.addSubview(widthRow)
-        panel.addSubview(widthSlider)
-        y -= 36
+        if stockWidget.config.usesTickerWidth {
+            let widthRow = makeSettingRow(label: "Ticker Width", y: y, inset: inset, width: cardW)
+            let widthSlider = NSSlider(frame: NSRect(x: inset + cardW / 2, y: y - 20, width: cardW / 2, height: 20))
+            widthSlider.minValue = 80
+            widthSlider.maxValue = 400
+            widthSlider.doubleValue = stockWidget.config.tickerWidth
+            widthSlider.target = self
+            widthSlider.action = #selector(stockWidthChanged(_:))
+            widthSlider.identifier = NSUserInterfaceItemIdentifier("widthSlider:\(instance.id.uuidString)")
+            panel.addSubview(widthRow)
+            panel.addSubview(widthSlider)
+            y -= 36
+        }
 
         // Refresh Interval dropdown
-        let refreshRow = makeSettingRow(label: "Refresh Interval", y: y, inset: inset, width: cardW)
-        let refreshPopup = NSPopUpButton(frame: NSRect(x: inset + cardW / 2, y: y - 22, width: cardW / 2, height: 24))
-        refreshPopup.addItems(withTitles: ["5 sec", "10 sec", "15 sec", "30 sec", "1 min"])
-        let intervals: [TimeInterval] = [5, 10, 15, 30, 60]
-        if let idx = intervals.firstIndex(of: stockWidget.config.refreshInterval) {
-            refreshPopup.selectItem(at: idx)
-        } else {
-            refreshPopup.selectItem(at: 0)
+        if stockWidget.config.usesRefreshInterval {
+            let refreshRow = makeSettingRow(label: "Refresh Interval", y: y, inset: inset, width: cardW)
+            let refreshPopup = NSPopUpButton(frame: NSRect(x: inset + cardW / 2, y: y - 22, width: cardW / 2, height: 24))
+            refreshPopup.addItems(withTitles: ["5 sec", "10 sec", "15 sec", "30 sec", "1 min"])
+            let intervals: [TimeInterval] = [5, 10, 15, 30, 60]
+            if let idx = intervals.firstIndex(of: stockWidget.config.refreshInterval) {
+                refreshPopup.selectItem(at: idx)
+            } else {
+                refreshPopup.selectItem(at: 0)
+            }
+            refreshPopup.target = self
+            refreshPopup.action = #selector(stockRefreshChanged(_:))
+            refreshPopup.identifier = NSUserInterfaceItemIdentifier("refreshPopup:\(instance.id.uuidString)")
+            panel.addSubview(refreshRow)
+            panel.addSubview(refreshPopup)
         }
-        refreshPopup.target = self
-        refreshPopup.action = #selector(stockRefreshChanged(_:))
-        refreshPopup.identifier = NSUserInterfaceItemIdentifier("refreshPopup:\(instance.id.uuidString)")
-        panel.addSubview(refreshRow)
-        panel.addSubview(refreshPopup)
     }
 
     // CPU config panel: handled by DeclarativeConfig - no hardcoded panel needed

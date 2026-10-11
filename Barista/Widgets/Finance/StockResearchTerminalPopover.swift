@@ -3165,13 +3165,14 @@ private class TerminalStockChartView: NSView {
         path.lineWidth = 0.8
         path.stroke()
 
+        // Three stacked rows, top to bottom: price, date and volume, then OHL.
         drawText(priceText,
-                 in: NSRect(x: rect.minX + 9, y: rect.minY + 22, width: tipW - 18, height: 13),
+                 in: NSRect(x: rect.minX + 9, y: rect.minY + 41, width: tipW - 18, height: 14),
                  color: color,
                  font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
                  align: .left)
         drawText(sampleText,
-                 in: NSRect(x: rect.minX + 9, y: rect.minY + 24, width: tipW - 18, height: 11),
+                 in: NSRect(x: rect.minX + 9, y: rect.minY + 25, width: tipW - 18, height: 12),
                  color: Theme.textFaint,
                  font: NSFont.systemFont(ofSize: 9, weight: .medium),
                  align: .left)

@@ -159,7 +159,7 @@ extension MarketStatus {
     var color: NSColor {
         switch self {
         case .open: return NSColor(red: 0.25, green: 0.85, blue: 0.55, alpha: 1)
-        case .preMarket, .afterHours: return Theme.brandAmber
+        case .preMarket, .afterHours, .overnight: return Theme.brandAmber
         case .closed: return Theme.textMuted
         }
     }

@@ -48,7 +48,7 @@ struct SessionSplit: Equatable {
             return (regular, SessionSeries())
         case .afterHours:
             return (regular, post)
-        case .closed:
+        case .overnight, .closed:
             // After the post-market window, or a weekend. The last thing that
             // happened is the regular session; anything after it is history but
             // still worth showing as a tail.
@@ -66,6 +66,19 @@ enum SessionSplitter {
         var regularEnd: Double = 0
 
         var isUsable: Bool { regularStart > 0 && regularEnd > regularStart }
+    }
+
+    /// The regular session of the day the bars were recorded on, read from a
+    /// Yahoo chart response's `tradingPeriods`. Nil when the feed omits it.
+    static func barBoundaries(meta: [String: Any]) -> Boundaries? {
+        func seconds(_ value: Any?) -> Double? {
+            (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
+        }
+        guard let periods = meta["tradingPeriods"] as? [String: Any],
+              let day = (periods["regular"] as? [[[String: Any]]])?.first?.first,
+              let start = seconds(day["start"]), let end = seconds(day["end"]) else { return nil }
+        let boundaries = Boundaries(regularStart: start, regularEnd: end)
+        return boundaries.isUsable ? boundaries : nil
     }
 
     /// Assigns each bar to a session by its timestamp.

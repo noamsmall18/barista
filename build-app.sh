@@ -123,7 +123,14 @@ install_one() {
     ROLLBACK_TO=""
     echo "==> Updated $destination (one installed copy)"
     if [ "${BARISTA_TEST_MODE:-}" != "1" ] && { [ "$LAUNCH" = "yes" ] || [ "$was_running" = "yes" ]; }; then
-        open "$destination"
+        # Launch Services can still be letting go of the bundle that was just
+        # replaced, which makes the first open fail. Give it a few tries.
+        attempts=0
+        until open "$destination" 2>/dev/null; do
+            attempts=$((attempts + 1))
+            [ "$attempts" -lt 5 ] || { echo "warning: installed $name but couldn't reopen it; open it from Applications" >&2; break; }
+            sleep 1
+        done
     fi
 }
 

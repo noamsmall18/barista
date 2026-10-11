@@ -1504,7 +1504,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
             ("paintbrush", "Colors", w.config.coloredTicker, 0),
             ("chart.xyaxis.line", "Sparklines", w.config.showSparklines, 1),
             ("chart.bar", "Volume", w.config.showVolume, 2),
-            ("clock.badge.fill", "AH/PM", w.config.showExtendedHours, 4),
+            ("clock.badge.fill", "Ext hours", w.config.showExtendedHours, 4),
             ("building.columns", "Mkt Cap", w.config.showMarketCap, 5),
             ("arrow.up.and.down", "Day Range", w.config.showDayRange, 6),
             ("divide.circle", "P/E", w.config.showPERatio, 7),
@@ -1540,99 +1540,107 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         }
         iy += CGFloat((toggles.count + 1) / 2) * 30 + 4
 
-        // Width slider
-        let wIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
-        wIcon.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: "Width")
-        wIcon.contentTintColor = Theme.textFaint
-        settingsCard.addSubview(wIcon)
+        // Width only sizes the scrolling tape and the chart, so it is hidden
+        // for the modes that size themselves.
+        if w.config.usesTickerWidth {
+            let wIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
+            wIcon.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: "Width")
+            wIcon.contentTintColor = Theme.textFaint
+            settingsCard.addSubview(wIcon)
 
-        let wLabel = NSTextField(labelWithString: "Width")
-        wLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); wLabel.textColor = Theme.textMuted
-        wLabel.frame = NSRect(x: inset + 16, y: iy, width: 40, height: 14)
-        settingsCard.addSubview(wLabel)
+            let wLabel = NSTextField(labelWithString: "Width")
+            wLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); wLabel.textColor = Theme.textMuted
+            wLabel.frame = NSRect(x: inset + 16, y: iy, width: 40, height: 14)
+            settingsCard.addSubview(wLabel)
 
-        let wValue = NSTextField(labelWithString: "\(Int(w.config.tickerWidth))px")
-        wValue.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold); wValue.textColor = Theme.brandAmber
-        wValue.alignment = .right
-        wValue.frame = NSRect(x: innerW - 30, y: iy, width: 42, height: 14)
-        settingsCard.addSubview(wValue)
-        iy += 16
+            let wValue = NSTextField(labelWithString: "\(Int(w.config.tickerWidth))px")
+            wValue.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold); wValue.textColor = Theme.brandAmber
+            wValue.alignment = .right
+            wValue.frame = NSRect(x: innerW - 30, y: iy, width: 42, height: 14)
+            settingsCard.addSubview(wValue)
+            iy += 16
 
-        let sliderTrack = NSView(frame: NSRect(x: inset, y: iy + 4, width: innerW, height: 6))
-        sliderTrack.wantsLayer = true; sliderTrack.layer?.cornerRadius = 3
-        sliderTrack.layer?.backgroundColor = Theme.sunkenBg.cgColor
-        settingsCard.addSubview(sliderTrack)
+            let sliderTrack = NSView(frame: NSRect(x: inset, y: iy + 4, width: innerW, height: 6))
+            sliderTrack.wantsLayer = true; sliderTrack.layer?.cornerRadius = 3
+            sliderTrack.layer?.backgroundColor = Theme.sunkenBg.cgColor
+            settingsCard.addSubview(sliderTrack)
 
-        let slider = NSSlider(value: w.config.tickerWidth, minValue: 80, maxValue: 500, target: self, action: #selector(widthChanged(_:)))
-        slider.frame = NSRect(x: inset, y: iy, width: innerW, height: 14)
-        slider.isContinuous = true
-        settingsCard.addSubview(slider)
-        iy += 22
-
-        // Scroll speed slider
-        let sIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
-        sIcon.image = NSImage(systemSymbolName: "hare", accessibilityDescription: "Speed")
-        sIcon.contentTintColor = Theme.textFaint
-        settingsCard.addSubview(sIcon)
-
-        let sLabel = NSTextField(labelWithString: "Speed")
-        sLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); sLabel.textColor = Theme.textMuted
-        sLabel.frame = NSRect(x: inset + 16, y: iy, width: 40, height: 14)
-        settingsCard.addSubview(sLabel)
-
-        let sValue = NSTextField(labelWithString: String(format: "%.1fx", w.config.scrollSpeed))
-        sValue.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold); sValue.textColor = Theme.brandAmber
-        sValue.alignment = .right
-        sValue.frame = NSRect(x: innerW - 30, y: iy, width: 42, height: 14)
-        settingsCard.addSubview(sValue)
-        iy += 16
-
-        let speedSlider = NSSlider(value: w.config.scrollSpeed, minValue: 0.1, maxValue: 2.0, target: self, action: #selector(speedChanged(_:)))
-        speedSlider.frame = NSRect(x: inset, y: iy, width: innerW, height: 14)
-        speedSlider.isContinuous = true
-        settingsCard.addSubview(speedSlider)
-        iy += 22
-
-        // Refresh interval
-        let rIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
-        rIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
-        rIcon.contentTintColor = Theme.textFaint
-        settingsCard.addSubview(rIcon)
-
-        let rLabel = NSTextField(labelWithString: "Refresh")
-        rLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); rLabel.textColor = Theme.textMuted
-        rLabel.frame = NSRect(x: inset + 16, y: iy, width: 50, height: 14)
-        settingsCard.addSubview(rLabel)
-        iy += 18
-
-        let rTrack = NSView(frame: NSRect(x: inset, y: iy, width: innerW, height: 26))
-        rTrack.wantsLayer = true; rTrack.layer?.cornerRadius = 7
-        rTrack.layer?.backgroundColor = Theme.sunkenBg.cgColor
-        settingsCard.addSubview(rTrack)
-
-        let intervals: [(String, TimeInterval)] = [("5s", 5), ("10s", 10), ("15s", 15), ("30s", 30)]
-        let rGap: CGFloat = 3
-        let rW = (innerW - rGap * CGFloat(intervals.count + 1)) / CGFloat(intervals.count)
-        for (i, (title, interval)) in intervals.enumerated() {
-            let x = rGap + CGFloat(i) * (rW + rGap)
-            let isActive = abs(w.config.refreshInterval - interval) < 1
-            if isActive {
-                let pill = NSView(frame: NSRect(x: x, y: 3, width: rW, height: 20))
-                pill.wantsLayer = true; pill.layer?.cornerRadius = 5
-                pill.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.2).cgColor
-                pill.layer?.borderWidth = 0.5; pill.layer?.borderColor = Theme.brandAmber.withAlphaComponent(0.4).cgColor
-                rTrack.addSubview(pill)
-            }
-            let btn = NSButton(frame: NSRect(x: x, y: 3, width: rW, height: 20))
-            btn.isBordered = false
-            btn.attributedTitle = NSAttributedString(string: title, attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: isActive ? .semibold : .regular),
-                .foregroundColor: isActive ? Theme.brandAmber : Theme.textMuted
-            ])
-            btn.target = self; btn.action = #selector(refreshChanged(_:)); btn.tag = Int(interval)
-            rTrack.addSubview(btn)
+            let slider = NSSlider(value: w.config.tickerWidth, minValue: 80, maxValue: 500, target: self, action: #selector(widthChanged(_:)))
+            slider.frame = NSRect(x: inset, y: iy, width: innerW, height: 14)
+            slider.isContinuous = true
+            settingsCard.addSubview(slider)
+            iy += 22
         }
-        iy += 32
+
+        // Scroll speed, shown only while the tape is scrolling.
+        if w.config.usesScrollSpeed {
+            let sIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
+            sIcon.image = NSImage(systemSymbolName: "hare", accessibilityDescription: "Speed")
+            sIcon.contentTintColor = Theme.textFaint
+            settingsCard.addSubview(sIcon)
+
+            let sLabel = NSTextField(labelWithString: "Speed")
+            sLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); sLabel.textColor = Theme.textMuted
+            sLabel.frame = NSRect(x: inset + 16, y: iy, width: 40, height: 14)
+            settingsCard.addSubview(sLabel)
+
+            let sValue = NSTextField(labelWithString: String(format: "%.1fx", w.config.scrollSpeed))
+            sValue.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold); sValue.textColor = Theme.brandAmber
+            sValue.alignment = .right
+            sValue.frame = NSRect(x: innerW - 30, y: iy, width: 42, height: 14)
+            settingsCard.addSubview(sValue)
+            iy += 16
+
+            let speedSlider = NSSlider(value: w.config.scrollSpeed, minValue: 0.1, maxValue: 2.0, target: self, action: #selector(speedChanged(_:)))
+            speedSlider.frame = NSRect(x: inset, y: iy, width: innerW, height: 14)
+            speedSlider.isContinuous = true
+            settingsCard.addSubview(speedSlider)
+            iy += 22
+        }
+
+        // Ultra-fast sets its own cadence, so the interval choice only appears
+        // in Standard mode.
+        if w.config.usesRefreshInterval {
+            let rIcon = NSImageView(frame: NSRect(x: inset, y: iy + 1, width: 12, height: 12))
+            rIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Refresh")
+            rIcon.contentTintColor = Theme.textFaint
+            settingsCard.addSubview(rIcon)
+
+            let rLabel = NSTextField(labelWithString: "Refresh")
+            rLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium); rLabel.textColor = Theme.textMuted
+            rLabel.frame = NSRect(x: inset + 16, y: iy, width: 50, height: 14)
+            settingsCard.addSubview(rLabel)
+            iy += 18
+
+            let rTrack = NSView(frame: NSRect(x: inset, y: iy, width: innerW, height: 26))
+            rTrack.wantsLayer = true; rTrack.layer?.cornerRadius = 7
+            rTrack.layer?.backgroundColor = Theme.sunkenBg.cgColor
+            settingsCard.addSubview(rTrack)
+
+            let intervals: [(String, TimeInterval)] = [("5s", 5), ("10s", 10), ("15s", 15), ("30s", 30)]
+            let rGap: CGFloat = 3
+            let rW = (innerW - rGap * CGFloat(intervals.count + 1)) / CGFloat(intervals.count)
+            for (i, (title, interval)) in intervals.enumerated() {
+                let x = rGap + CGFloat(i) * (rW + rGap)
+                let isActive = abs(w.config.refreshInterval - interval) < 1
+                if isActive {
+                    let pill = NSView(frame: NSRect(x: x, y: 3, width: rW, height: 20))
+                    pill.wantsLayer = true; pill.layer?.cornerRadius = 5
+                    pill.layer?.backgroundColor = Theme.brandAmber.withAlphaComponent(0.2).cgColor
+                    pill.layer?.borderWidth = 0.5; pill.layer?.borderColor = Theme.brandAmber.withAlphaComponent(0.4).cgColor
+                    rTrack.addSubview(pill)
+                }
+                let btn = NSButton(frame: NSRect(x: x, y: 3, width: rW, height: 20))
+                btn.isBordered = false
+                btn.attributedTitle = NSAttributedString(string: title, attributes: [
+                    .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: isActive ? .semibold : .regular),
+                    .foregroundColor: isActive ? Theme.brandAmber : Theme.textMuted
+                ])
+                btn.target = self; btn.action = #selector(refreshChanged(_:)); btn.tag = Int(interval)
+                rTrack.addSubview(btn)
+            }
+            iy += 32
+        }
 
         // The faster mode is explicitly best-effort: the free quote providers
         // still set their own limits, which the summary below explains.

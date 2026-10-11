@@ -57,6 +57,13 @@ final class InMemoryTestPreferences: UserDefaults {
     override func double(forKey key: String) -> Double { (object(forKey: key) as? NSNumber)?.doubleValue ?? 0 }
     override func synchronize() -> Bool { true }
 
+    /// Clearing a domain by name would otherwise reach the on-disk store and
+    /// leave an empty preferences file behind for every test that cleans up.
+    override func removePersistentDomain(forName domainName: String) {
+        lock.lock(); defer { lock.unlock() }
+        values.removeAll()
+    }
+
     override func dictionaryRepresentation() -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         return values
