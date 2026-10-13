@@ -2841,12 +2841,34 @@ private class MetricGraphView: NSView {
     }
 }
 
-private class TerminalStockChartView: NSView {
+struct TerminalChartHoverLayout {
+    let box: NSRect
+    let price: NSRect
+    let sample: NSRect
+    let details: NSRect
+
+    init(point: NSPoint, bounds: NSRect) {
+        let width = min(248, max(0, bounds.width - 16))
+        let height: CGFloat = 76
+        var x = point.x + 10
+        if x + width > bounds.maxX - 8 { x = point.x - width - 10 }
+        x = max(bounds.minX + 8, min(x, bounds.maxX - width - 8))
+        let y = min(max(point.y + 10, bounds.minY + 8), bounds.maxY - height - 8)
+        box = NSRect(x: x, y: y, width: width, height: height)
+        // AppKit draws upward here. Give each line its own full font height.
+        price = NSRect(x: x + 9, y: y + 48, width: width - 18, height: 18)
+        sample = NSRect(x: x + 9, y: y + 29, width: width - 18, height: 14)
+        details = NSRect(x: x + 9, y: y + 10, width: width - 18, height: 14)
+    }
+}
+
+final class TerminalStockChartView: NSView {
     private weak var widget: StockTickerWidget?
     private var quote: MarketQuote
     private var history: StockPriceHistory?
     private var fallbackPoints: [StockPricePoint]
-    private var hoverIndex: Int?
+    private(set) var hoverIndex: Int?
+    private var hoverLocation: NSPoint?
     private var tracking: NSTrackingArea?
 
     init(widget: StockTickerWidget, quote: MarketQuote, history: StockPriceHistory?, frame: NSRect) {
@@ -2881,12 +2903,19 @@ private class TerminalStockChartView: NSView {
                 : Date().addingTimeInterval(Double(index - max(series.count - 1, 0)) * 300)
             return StockPricePoint(date: date, open: nil, high: nil, low: nil, close: close, volume: nil)
         }
+        updateHoverSelection()
         needsDisplay = true
     }
 
     func update(history: StockPriceHistory?) {
+        if history == nil || (self.history != nil &&
+            (self.history?.range != history?.range || self.history?.symbol != history?.symbol)) {
+            hoverLocation = nil
+        }
         self.history = history
-        hoverIndex = nil
+        // A refresh can return the same cached bars or append new ones. Keep
+        // inspection at the cursor's x coordinate until it leaves the plot.
+        updateHoverSelection()
         needsDisplay = true
     }
 
@@ -2907,21 +2936,28 @@ private class TerminalStockChartView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        hoverLocation = convert(event.locationInWindow, from: nil)
+        updateHoverSelection()
+        needsDisplay = true
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        mouseMoved(with: event)
+    }
+
+    private func updateHoverSelection() {
         let points = chartPoints
-        guard points.count > 1 else { return }
-        let point = convert(event.locationInWindow, from: nil)
         let plot = pricePlotRect
-        guard plot.contains(point) else {
+        guard let point = hoverLocation, plot.contains(point), points.count > 1 else {
             hoverIndex = nil
-            needsDisplay = true
             return
         }
         let progress = min(max((point.x - plot.minX) / plot.width, 0), 1)
         hoverIndex = min(max(Int(round(progress * CGFloat(points.count - 1))), 0), points.count - 1)
-        needsDisplay = true
     }
 
     override func mouseExited(with event: NSEvent) {
+        hoverLocation = nil
         hoverIndex = nil
         needsDisplay = true
     }
@@ -3152,13 +3188,8 @@ private class TerminalStockChartView: NSView {
         } else {
             ohlText = "Hovering sample \(index + 1) of \(chartPoints.count)"
         }
-        let tipW: CGFloat = 208
-        let tipH: CGFloat = 62
-        var tx = point.x + 10
-        if tx + tipW > bounds.maxX - 8 { tx = point.x - tipW - 10 }
-        let ty = min(max(point.y + 10, bounds.minY + 8), bounds.maxY - tipH - 8)
-        let rect = NSRect(x: tx, y: ty, width: tipW, height: tipH)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        let layout = TerminalChartHoverLayout(point: point, bounds: bounds)
+        let path = NSBezierPath(roundedRect: layout.box, xRadius: 8, yRadius: 8)
         NSColor.black.withAlphaComponent(0.82).setFill()
         path.fill()
         Theme.cardBorderHover.withAlphaComponent(0.8).setStroke()
@@ -3166,17 +3197,17 @@ private class TerminalStockChartView: NSView {
         path.stroke()
 
         drawText(priceText,
-                 in: NSRect(x: rect.minX + 9, y: rect.minY + 22, width: tipW - 18, height: 13),
+                 in: layout.price,
                  color: color,
                  font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
                  align: .left)
         drawText(sampleText,
-                 in: NSRect(x: rect.minX + 9, y: rect.minY + 24, width: tipW - 18, height: 11),
+                 in: layout.sample,
                  color: Theme.textFaint,
                  font: NSFont.systemFont(ofSize: 9, weight: .medium),
                  align: .left)
         drawText(ohlText,
-                 in: NSRect(x: rect.minX + 9, y: rect.minY + 9, width: tipW - 18, height: 11),
+                 in: layout.details,
                  color: Theme.textGhost,
                  font: NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular),
                  align: .left)
