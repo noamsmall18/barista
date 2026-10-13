@@ -465,8 +465,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         return points.count >= 2 ? 22 + 6 + 104 + 13 + 16 : 22 + 6 + 26
     }
 
-    /// Points for a range: 1D is rebuilt live from intraday quotes, the rest come
-    /// from the stored series.
+    /// Shared recorded history, with a current-holdings estimate for 1D until
+    /// enough observations exist in the latest session.
     private func historyPoints(for portfolioID: String,
                                range: PortfolioHistoryService.Range) -> [PortfolioHistoryService.Point] {
         guard let w = widget else { return [] }

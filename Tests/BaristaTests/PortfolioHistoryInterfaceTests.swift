@@ -78,6 +78,38 @@ final class PortfolioHistoryInterfaceTests: XCTestCase {
 
 @MainActor
 final class PortfolioIntradayHistoryTests: XCTestCase {
+    func testDailyDropdownAndWindowShowEveryRecordedMinute() throws {
+        _ = NSApplication.shared
+        let start = ISO8601DateFormatter().date(from: "2026-10-09T14:00:00Z")!
+        var now = start
+        let preferences = InMemoryTestPreferences(suiteName: "minute-chart-\(UUID().uuidString)")!
+        let history = PortfolioHistoryService(defaults: preferences, clock: { now })
+        var config = StockTickerConfig(symbols: ["AAA"], coins: [], holdings: ["AAA": 10], cash: 100)
+        config.historyRange = .today
+        var quote = MarketQuote(symbol: "AAA", price: 100, change: 0, kind: .stock, sparkline: [])
+        quote.receivedAt = start.timeIntervalSince1970
+        let widget = StockTickerWidget(config: config, notificationsEnabled: false,
+                                       initialQuotes: [quote], historyService: history)
+        let original = widget.config.portfolios
+        for minute in 0...4 {
+            now = start.addingTimeInterval(Double(minute) * 60)
+            widget.recordPortfolioHistory(now: now)
+            history.flushPendingWrites()
+        }
+        let expected = [0.0, 60, 120, 180, 240].map { start.addingTimeInterval($0) }
+        XCTAssertFalse(widget.portfolioHistoryPresentation(range: .today).estimated)
+        let dropdown = MarketPopoverController(widget: widget, fetchesDetailData: false)
+        let window = MarketbarWindowController(widget: widget)
+        defer { if let native = window.window { _ = window.windowShouldClose(native) } }
+        func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
+        for root in [dropdown.buildView(), try XCTUnwrap(window.window?.contentView)] {
+            let chart = try XCTUnwrap(allViews(root).compactMap { $0 as? PortfolioChartView }.first)
+            XCTAssertEqual(chart.samples.map(\.date), expected)
+            XCTAssertEqual(chart.samples.map(\.value), [1100, 1100, 1100, 1100, 1100])
+        }
+        XCTAssertEqual(widget.config.portfolios, original)
+    }
+
     func testOneDayCurveDoesNotInventMinutesAcrossAWeekendGap() throws {
         let dates = ["2026-10-09T19:50:00Z", "2026-10-09T20:00:00Z", "2026-10-12T13:30:00Z", "2026-10-12T13:40:00Z"]
             .map { ISO8601DateFormatter().date(from: $0)! }

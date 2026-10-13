@@ -119,7 +119,7 @@ final class PortfolioHistoryTests: XCTestCase {
         XCTAssertEqual(history.points(for: "test", range: .all), saved)
     }
 
-    func testFrequentRefreshesStillProduceTenMinuteHistory() throws {
+    func testFrequentRefreshesRetainOneObservationPerMinute() throws {
         var now = date("2026-10-09T14:00:00Z")
         let history = PortfolioHistoryService(defaults: try defaults(), clock: { now })
         for i in 0..<31 {
@@ -127,7 +127,41 @@ final class PortfolioHistoryTests: XCTestCase {
             history.record(portfolioID: "test", value: 100_000 + Double(i))
             history.flushPendingWrites()
         }
-        XCTAssertEqual(history.sampleCount(for: "test"), 4)
+        XCTAssertEqual(history.sampleCount(for: "test"), 31)
+        let points = history.points(for: "test", range: .today, raw: true)
+        XCTAssertEqual(points.count, 31)
+        XCTAssertEqual(points.first?.time, date("2026-10-09T14:00:00Z"))
+        XCTAssertEqual(points.last?.time, date("2026-10-09T14:30:00Z"))
+        XCTAssertTrue(zip(points, points.dropFirst()).allSatisfy { $1.time.timeIntervalSince($0.time) == 60 })
+    }
+
+    func testSubMinuteRefreshesUpdateOnlyTheirOwnMinute() throws {
+        let start = date("2026-10-09T14:00:00Z")
+        var now = start
+        let history = PortfolioHistoryService(defaults: try defaults(), clock: { now })
+        for offset: TimeInterval in [0, 15, 55, 60, 75] {
+            now = start.addingTimeInterval(offset)
+            history.record(portfolioID: "test", value: 100_000 + offset)
+            history.flushPendingWrites()
+        }
+        let points = history.points(for: "test", range: .today, raw: true)
+        XCTAssertEqual(points.map(\.time), [date("2026-10-09T14:00:55Z"), date("2026-10-09T14:01:15Z")])
+        XCTAssertEqual(points.map(\.value), [100_055, 100_075])
+    }
+
+    func testMinuteRecordingPreservesOlderTenMinuteObservations() throws {
+        let saved = [PortfolioHistoryService.Point(time: date("2026-10-09T14:00:00Z"), value: 100_000),
+                     PortfolioHistoryService.Point(time: date("2026-10-09T14:10:00Z"), value: 100_010)]
+        var now = date("2026-10-09T14:11:00Z")
+        let history = PortfolioHistoryService(defaults: try defaults(saved), clock: { now })
+        for stamp in ["2026-10-09T14:11:00Z", "2026-10-09T14:12:00Z", "2026-10-09T14:13:00Z"] {
+            now = date(stamp)
+            history.record(portfolioID: "test", value: 100_020)
+            history.flushPendingWrites()
+        }
+        let points = history.points(for: "test", range: .today, raw: true)
+        XCTAssertEqual(Array(points.prefix(2)), saved)
+        XCTAssertEqual(points.count, 5)
     }
 
     func testNewWeekendPointsAreNotRecorded() throws {
@@ -248,7 +282,7 @@ final class PortfolioHistoryTests: XCTestCase {
         XCTAssertEqual(saved.values.compactMap { $0.last?.value }.sorted(), (1000..<1064).map(Double.init))
     }
 
-    func testAnEditWithinOneSamplingBucketKeepsItsReturnBoundary() throws {
+    func testAcceptedEditKeepsItsReturnBoundaryThroughLaterSamples() throws {
         var now = date("2026-10-09T14:00:00Z")
         let history = PortfolioHistoryService(defaults: try defaults(), clock: { now })
         func record(_ qty: Double, _ price: Double) {

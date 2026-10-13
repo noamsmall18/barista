@@ -54,9 +54,12 @@ withheld outside their observed timestamp coverage.
 
 ## Storage and interaction
 
-Sampling uses fixed ten-minute clock buckets so frequent updates cannot keep
-moving the same sample forever. Recent observations retain full detail; older
-points are compacted hourly, then daily. Daily history is no longer discarded at
+Sampling uses fixed one-minute clock buckets so frequent updates cannot keep
+moving the same sample forever. Each minute with a valid portfolio valuation
+keeps a data point; faster refreshes update only that minute. Existing ten-minute
+observations remain as recorded; missing past minutes are not invented. Recent
+observations retain full detail for ten days; older points are compacted hourly,
+then daily. Daily history is no longer discarded at
 120 days, so 6M and All can continue accumulating. This cannot recover history
 that an earlier version already discarded. Flow observations and their immediate
 predecessors survive compaction so returns remain correct.

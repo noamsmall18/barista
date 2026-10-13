@@ -6,8 +6,8 @@ import Darwin
 /// Records what each portfolio was worth over time, so the card can show a trend
 /// rather than only today's move.
 ///
-/// Points are timestamped and keyed by portfolio id. New values are sampled at
-/// most every ten minutes, and the store is thinned in tiers as it ages: full
+/// Points are timestamped and keyed by portfolio id. New values are sampled
+/// once per clock minute, and the store is thinned in tiers as it ages: full
 /// detail for recent days, hourly for the last few months, then one closing
 /// value per day. That keeps 1W and 1M readable as curves without growing
 /// without bound.
@@ -43,8 +43,8 @@ final class PortfolioHistoryService {
     }
 
     enum Range: String, Codable, CaseIterable {
-        /// Today's session, rebuilt live from intraday quotes rather than read
-        /// from the stored daily series.
+        /// Latest session's recorded observations, with a current-holdings
+        /// estimate from intraday quotes until enough observations exist.
         case today
         case week, month, quarter, halfYear, all
 
@@ -85,12 +85,11 @@ final class PortfolioHistoryService {
 
     private var pendingEdits: [String: (holdings: [String: Double], cash: Double, since: Date)] = [:]
 
-    /// How close together points may be while a day is still "recent". Ten
-    /// minutes over regular/extended sessions is at most 96 points a day, enough to
-    /// give 1W and 1M some shape without bloating the store.
-    private static let minimumSpacing: TimeInterval = 10 * 60
+    /// Keep each observed minute while recent. Faster quote refreshes update
+    /// the current minute rather than replacing the preceding minutes.
+    private static let minimumSpacing: TimeInterval = 60
 
-    /// Days kept at full 10-minute resolution.
+    /// Days kept at full one-minute resolution.
     private static let fineDays = 10
 
     /// Days kept at hourly resolution beyond that, so 1M and 3M still have shape
@@ -116,8 +115,8 @@ final class PortfolioHistoryService {
     // MARK: - Recording
 
     /// Records the current value for a portfolio. Cheap enough to call on every
-    /// refresh: points closer together than `minimumSpacing` overwrite the last
-    /// one rather than accumulating.
+    /// refresh: points within the same clock minute overwrite the last one
+    /// rather than accumulating, except where a flow boundary must be preserved.
     func record(portfolioID: String, value: Double, trading: Trading = .equities,
                 valuation: Valuation? = nil) {
         guard value.isFinite, value > 0 else { return }
@@ -335,7 +334,7 @@ final class PortfolioHistoryService {
 
         // Collapse to one closing value per day first: with intraday sampling,
         // consecutive points can be minutes apart, and "best day" would quietly
-        // become "best ten minutes".
+        // become "best minute".
         let cal = PortfolioTradingCalendar.calendar
         var closingByDay: [Date: (Date, Double)] = [:]
         for p in pts {
