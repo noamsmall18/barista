@@ -66,7 +66,7 @@ final class DropdownRefreshModeTests: XCTestCase {
 
         instance.showDropdownMenu()
         XCTAssertTrue(instance.popoverController?.isShown == true)
-        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" }?.contentView)
+        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" && $0.isVisible }?.contentView)
         let ultraFast = try XCTUnwrap(allViews(content).compactMap { $0 as? NSButton }.first {
             $0.action == NSSelectorFromString("refreshModeChanged:") && $0.tag == 1
         })

@@ -187,3 +187,33 @@ test('service disconnect points to the independent launcher',async()=>{
   assert.match(node('warning').textContent,/Reopen the research launcher/);
   assert.doesNotMatch(node('warning').textContent,/Keep the app running/);
 });
+
+test('portfolio trading observations compress weekend gaps in the rendered path',async()=>{
+  const data=fixture();
+  data.history=[[1791556200,1000],[1791556800,1001],[1791811800,1002],[1791812400,1003]];
+  const {node,context}=await render(data);
+  vm.runInContext("portfolioRange='ALL';renderPortfolioChart()",context);
+  const html=node('portfolio-chart').innerHTML;
+  assert.match(html,/data-compressed="true"/);
+  const path=html.match(/<path class="line " d="([^"]+)/)[1];
+  const xs=[...path.matchAll(/[ML]([\d.]+),/g)].map(p=>Number(p[1]));
+  assert.ok(Math.abs((xs[1]-xs[0])-(xs[2]-xs[1]))<.02);
+  assert.ok(Math.abs((xs[2]-xs[1])-(xs[3]-xs[2]))<.02);
+});
+
+test('raw portfolio view restores original dip and identifies recorded values',async()=>{
+  const data=fixture();data.history=[[1,1000],[3,1010]];data.historyRaw=[[1,1000],[2,900],[3,1010]];
+  const {node,context}=await render(data);
+  node('portfolio-raw').checked=true;
+  vm.runInContext("portfolioRange='ALL';renderPortfolioChart()",context);
+  assert.match(node('portfolio-chart').innerHTML,/900/);
+  assert.match(node('chart-note').textContent,/recorded/i);
+});
+
+test('recorded intraday observations identify actual history rather than a holdings reconstruction',async()=>{
+  const data=fixture();data.intradayEstimated=false;
+  const {node}=await render(data);
+  assert.match(node('portfolio-chart').innerHTML,/data-points=/);
+  assert.match(node('chart-note').textContent,/Recorded trading observations/);
+  assert.doesNotMatch(node('chart-note').textContent,/using current holdings/);
+});

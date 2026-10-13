@@ -6,6 +6,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var reopenObserver: NSObjectProtocol?
     var settingsWindow: NSWindow?
     private var marketbarWindowController: MarketbarWindowController?
+    private var recoveryWindowController: RecoveryWindowController?
+    private var recoveryTimer: Timer?
+    private var reopenAfterRecovery = false
     private var primaryWindow: NSWindow? {
         AppFlavor.current == .marketbar ? marketbarWindowController?.window : settingsWindow
     }
@@ -39,11 +42,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // only; Barista's copy is left exactly as it was.
         FlavorMigration.importFromBaristaIfNeeded()
 
+        // Preserve the on-disk state before any decoder/migration can fall back.
+        do { _ = try RecoveryStore.shared?.capture(reason: "App opened") }
+        catch { NSLog("Recovery backup failed: %@", error.localizedDescription) }
+        let recoveryProblem = RecoveryStore.shared?.currentDataProblem()
+        recoveryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            do { _ = try RecoveryStore.shared?.capture() }
+            catch { NSLog("Recovery backup failed: %@", error.localizedDescription) }
+        }
+
         // Register the widget types this flavour ships
         WidgetRegistry.shared.registerAll()
 
         // Load and activate saved widgets
-        statusBarController.syncMenuBar()
+        if recoveryProblem == nil { statusBarController.syncMenuBar() }
 
         // Apply saved menu bar appearance (color/gradient)
         let savedAppearance = MenuBarAppearance.load()
@@ -113,6 +125,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        if recoveryProblem != nil {
+            showRecoveryWindow()
+            return
+        }
+
         // Show onboarding on first launch, settings on subsequent
         if !AppPreferences.shared.bool(forKey: "barista.hasLaunched") {
             if AppFlavor.current == .marketbar {
@@ -125,6 +142,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        recoveryTimer?.invalidate()
         stopSettingsRefreshTimer()
         statusBarController.removeAllWidgets()
         PortfolioHistoryService.shared.flushPendingWrites()
@@ -148,6 +166,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let settings = NSMenuItem(title: AppFlavor.current == .marketbar ? "Open Marketbar…" : "Settings…", action: #selector(showSettingsWindow), keyEquivalent: ",")
         settings.target = self
         app.addItem(settings)
+        let recovery = NSMenuItem(title: "Backup & Recovery…", action: #selector(showRecoveryWindow), keyEquivalent: "")
+        recovery.target = self
+        app.addItem(recovery)
         app.addItem(.separator())
         app.addItem(NSMenuItem(title: "Hide " + AppFlavor.current.displayName, action: #selector(NSApplication.hide(_:)), keyEquivalent: "h"))
         app.addItem(.separator())
@@ -318,7 +339,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Settings Window
 
+    @objc func showRecoveryWindow() {
+        guard let store = RecoveryStore.shared else { return }
+        if recoveryWindowController == nil {
+            recoveryWindowController = RecoveryWindowController(store: store, prepareRestore: {
+                PortfolioHistoryService.shared.flushPendingWrites()
+            }, willRestore: { [weak self] in self?.prepareForRecovery() }, didRestore: { [weak self] in self?.reloadAfterRecovery() })
+        }
+        recoveryWindowController?.present()
+    }
+
+    /// A restore replaces widget objects so their live menus, timers and saved
+    /// configurations all use the recovered state immediately.
+    func prepareForRecovery() {
+        reopenAfterRecovery = marketbarWindowController?.window?.isVisible == true
+        marketbarWindowController?.window?.orderOut(nil)
+        marketbarWindowController = nil
+        statusBarController.removeAllWidgets()
+        PortfolioHistoryService.shared.flushPendingWrites()
+    }
+
+    func reloadAfterRecovery() {
+        guard RecoveryStore.shared?.currentDataProblem() == nil else { return }
+        ProfileManager.shared.reload()
+        MenuBarOverlay.shared.apply(MenuBarAppearance.load())
+        statusBarController.syncMenuBar()
+        if AppFlavor.current == .marketbar {
+            if reopenAfterRecovery { showSettingsWindow() }
+        } else { rebuildSettingsUI() }
+    }
+
     @objc func showSettingsWindow() {
+        if RecoveryStore.shared?.currentDataProblem() != nil {
+            showRecoveryWindow()
+            return
+        }
         if AppFlavor.current == .marketbar {
             if marketbarWindowController == nil {
                 if !statusBarController.activeInstances.contains(where: { $0.widgetID == "stock-ticker" }) {

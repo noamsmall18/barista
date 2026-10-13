@@ -48,7 +48,7 @@ async function api(path, signal, body) {
 }
 
 // One SVG renderer for price, portfolio and rebased comparison series.
-function graph(points, comparison = [], mini = false, ordinal = false, currency = 'USD', percent = false, overlays = [], primaryName = 'Value') {
+function graph(points, comparison = [], mini = false, ordinal = false, currency = 'USD', percent = false, overlays = [], primaryName = 'Value', compressed = false) {
   const clean = A.points(points);
   if (clean.length < 2) return mini ? '' : empty('A little more history is needed. This chart fills in as prices arrive.');
   const width = mini ? 90 : 720, height = mini ? 28 : 260, top = mini ? 3 : 24, bottom = mini ? 3 : 28, left = mini ? 0 : 3, right = mini ? 0 : 64;
@@ -58,12 +58,20 @@ function graph(points, comparison = [], mini = false, ordinal = false, currency 
   const times = allPoints.map(p => p[0]), firstTime = Math.min(...times), lastTime = Math.max(...times);
   const values = allPoints.map(p => p[1]), low = Math.min(...values), high = Math.max(...values);
   const padding = (high - low || Math.max(Math.abs(high) * .01, 1)) * .12, min = low - padding, max = high + padding;
-  const x = t => left + (t - firstTime) / (lastTime - firstTime || 1) * (width - left - right);
+  const position = t => {
+    if (!compressed) return (t - firstTime) / (lastTime - firstTime || 1);
+    if (t <= clean[0][0]) return 0;
+    if (t >= clean.at(-1)[0]) return 1;
+    let lo=0,hi=clean.length-1;
+    while(lo+1<hi){const mid=(lo+hi)>>1;if(clean[mid][0]<=t)lo=mid;else hi=mid;}
+    return (lo+(t-clean[lo][0])/(clean[hi][0]-clean[lo][0]))/(clean.length-1);
+  };
+  const x = t => left + position(t) * (width - left - right);
   const y = v => top + (max - v) / (max - min) * (height - top - bottom);
   const line = series => series.map((p, i) => `${i ? 'L' : 'M'}${x(p[0]).toFixed(2)},${y(p[1]).toFixed(2)}`).join(' ');
   const grid = mini ? '' : Array.from({length:4}, (_, i) => {
     const v = max - i * (max - min) / 3, py = y(v);
-    return `<line class="grid-line" x1="0" y1="${py}" x2="${width-right+8}" y2="${py}"/><text x="${width-right+14}" y="${py+4}">${esc(percent ? v.toFixed(1)+'%' : compact(v))}</text>`;
+    return `<line class="grid-line" x1="0" y1="${py}" x2="${width-right+8}" y2="${py}"/><text x="${width-right+14}" y="${py+4}">${esc(percent ? v.toFixed(1)+'%' : high-low < Math.abs(high)*.01 ? money(v,currency) : compact(v))}</text>`;
   }).join('');
   const sameDay = new Date(firstTime * 1000).toDateString() === new Date(lastTime * 1000).toDateString();
   const label = t => new Date(t * 1000).toLocaleString([], sameDay ? {hour:'numeric', minute:'2-digit'} : {month:'short', day:'numeric'});
@@ -71,13 +79,15 @@ function graph(points, comparison = [], mini = false, ordinal = false, currency 
   const id = `chart-fill-${++graphID}`;
   const area = mini || extra.length ? '' : `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e6c895" stop-opacity=".18"/><stop offset="100%" stop-color="#e6c895" stop-opacity="0"/></linearGradient></defs><path d="${line(clean)} L${x(clean.at(-1)[0])},${height-bottom} L${x(clean[0][0])},${height-bottom} Z" fill="url(#${id})"/>`;
   const series = [{name:primaryName, points:clean}, ...(compare.length ? [{name:'SPY', points:compare}] : []), ...extra];
-  const interaction = mini ? '' : ` tabindex="0" data-points="${esc(JSON.stringify(clean))}" data-series="${esc(JSON.stringify(series))}" data-first="${firstTime}" data-last="${lastTime}" data-min="${min}" data-max="${max}" data-ordinal="${ordinal}" data-currency="${esc(currency)}" data-percent="${percent}"`;
+  const interaction = mini ? '' : ` tabindex="0" data-points="${esc(JSON.stringify(clean))}" data-series="${esc(JSON.stringify(series))}" data-first="${firstTime}" data-last="${lastTime}" data-min="${min}" data-max="${max}" data-ordinal="${ordinal}" data-compressed="${compressed}" data-currency="${esc(currency)}" data-percent="${percent}"`;
   return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${esc(`Value from ${num(clean[0][1])} to ${num(clean.at(-1)[1])}${percent?' percent':''}. ${mini?'':'Use left and right arrow keys to inspect observations.'}`)}"${interaction}>${grid}${area}${compare.length > 1 ? `<path class="benchmark-line" d="${line(compare)}"/>` : ''}<path class="line ${mini ? tone(clean.at(-1)[1]-clean[0][1]) : ''}" d="${line(clean)}"/>${extra.map(s => `<path fill="none" stroke="${s.color}" stroke-width="2" vector-effect="non-scaling-stroke" d="${line(s.points)}"/>`).join('')}${labels}</svg>`;
 }
 function inspectChart(svg, index) {
   const points = JSON.parse(svg.dataset.points);
   index = Math.max(0, Math.min(points.length - 1, index)); svg.dataset.index = index;
-  const p = points[index], x = 3 + (p[0]-Number(svg.dataset.first)) / (Number(svg.dataset.last)-Number(svg.dataset.first)||1) * 653;
+  const p = points[index], fraction = svg.dataset.compressed === 'true' ? index / (points.length-1 || 1)
+    : (p[0]-Number(svg.dataset.first)) / (Number(svg.dataset.last)-Number(svg.dataset.first)||1);
+  const x = 3 + fraction * 653;
   const y = 24 + (Number(svg.dataset.max)-p[1]) / (Number(svg.dataset.max)-Number(svg.dataset.min)) * 208;
   let guide = svg.querySelector('.chart-guide'), dot = svg.querySelector('.chart-dot');
   if (!guide) {
@@ -203,14 +213,19 @@ function renderHoldings() {
 function renderPortfolioChart() {
   if(!state.summary.currencyComparable){mountChart('portfolio-chart',empty('Portfolio chart unavailable across different quote currencies.'));$('chart-summary').textContent='Currency conversion needed';$('chart-stats').innerHTML='';$('chart-note').textContent='Individual security charts remain available in their quote currencies.';return;}
   const cutoff=Date.now()/1000-(portfolioRange==='1W'?7:30)*86400;
-  const points=A.points(portfolioRange==='1D'?state.intraday:state.history.filter(p=>portfolioRange==='ALL'||p[0]>=cutoff));
+  const raw=portfolioRange!=='1D'&&$('portfolio-raw').checked;
+  $('portfolio-raw').disabled=portfolioRange==='1D';
+  const history=raw?(state.historyRaw||state.history):state.history;
+  const points=A.points(portfolioRange==='1D'?state.intraday:history.filter(p=>portfolioRange==='ALL'||p[0]>=cutoff));
   const comparison=portfolioRange==='1D'&&$('benchmark').checked?state.benchmark:[];
   const percent=$('portfolio-unit').value==='percent';
   $('benchmark').disabled=portfolioRange!=='1D';
-  mountChart('portfolio-chart',graph(percent?A.normalize(points):points,percent?A.normalize(comparison):comparison,false,false,'USD',percent));
+  mountChart('portfolio-chart',graph(percent?A.normalize(points):points,percent?A.normalize(comparison):comparison,false,false,'USD',percent,[],raw?'Recorded value':'Market-adjusted value',true));
   $('chart-summary').textContent=points.length>1?`${money(points.at(-1)[1])} · ${signed(points.at(-1)[1]-points[0][1])} over displayed observations`:'History is building';
   $('chart-stats').innerHTML=chartStats(points);
-  $('chart-note').textContent=portfolioRange==='1D'?'Intraday estimate using current holdings and minute bars. Gold: portfolio. Dashed blue: SPY rebased to the first portfolio value. Not a time-weighted investment return.':'Recorded values include holding and cash changes. Up to 120 days retained. Percentage change is not deposit-adjusted investment performance.';
+  $('chart-note').textContent=portfolioRange==='1D'?'Intraday estimate using current holdings and minute bars. Gold: portfolio. Dashed blue: SPY rebased to the first portfolio value. Not a time-weighted investment return.':'Trading observations only; closed periods are compressed. Holding/cash changes are neutralized and isolated glitches hidden. Dollar values are rebased to the latest recorded total. Use Raw to inspect original observations. Older history is retained as daily closes.';
+  if(portfolioRange==='1D'&&state.intradayEstimated===false)$('chart-note').textContent='Recorded trading observations. Holding/cash changes are adjusted; later edits do not reprice earlier observations. Gold: portfolio. Dashed blue: SPY where overlapping observations are available.';
+  if(raw&&portfolioRange!=='1D')$('chart-note').textContent='Original recorded values, including holding/cash changes and suspect observations. Closed periods are compressed. This is not investment performance.';
 }
 function renderEarnings() {
   const events=state.quotes.filter(q=>q.earnings).sort((a,b)=>a.earnings.date-b.earnings.date);
@@ -466,7 +481,7 @@ async function sync() {
   try {
     const next=await api('snapshot');if(next.error)throw new Error(next.error);
     state=next;
-    const fingerprint=JSON.stringify([next.portfolioID,next.portfolioName,next.portfolios,next.quotes,next.indices,next.summary,next.trades,next.intraday,next.history,next.benchmark,next.missingSymbols]);
+    const fingerprint=JSON.stringify([next.portfolioID,next.portfolioName,next.portfolios,next.quotes,next.indices,next.summary,next.trades,next.intraday,next.intradayEstimated,next.history,next.historyRaw,next.benchmark,next.missingSymbols]);
     if(fingerprint!==lastFingerprint){lastFingerprint=fingerprint;render();}
     $('status').textContent=next.stale?`● ${next.status} · prices may be stale`:`● ${next.status}`;
     $('status').className=next.stale?'down':'up';$('updated').textContent=`Newest successful refresh ${stamp(next.updatedAt)}`;
@@ -505,7 +520,7 @@ $('search').addEventListener('input',()=>state&&renderHoldings());
 $('position-filters').addEventListener('click',event=>{const button=event.target.closest('[data-filter]');if(!button)return;tableFilter=button.dataset.filter;chooseSegment('position-filters',tableFilter,'filter');renderHoldings();});
 $('positions-table').addEventListener('click',event=>{const button=event.target.closest('[data-sort]');if(!button)return;tableDirection=tableSort===button.dataset.sort?(tableDirection==='desc'?'asc':'desc'):(button.dataset.sort==='symbol'?'asc':'desc');tableSort=button.dataset.sort;renderHoldings();});
 $('portfolio-ranges').addEventListener('click',event=>{const button=event.target.closest('[data-range]');if(!button||!state)return;portfolioRange=button.dataset.range;chooseSegment('portfolio-ranges',portfolioRange,'range');renderPortfolioChart();savePreferences();});
-for(const id of ['benchmark','portfolio-unit'])$(id).addEventListener('change',()=>{if(state)renderPortfolioChart();savePreferences();});
+for(const id of ['benchmark','portfolio-unit','portfolio-raw'])$(id).addEventListener('change',()=>{if(state)renderPortfolioChart();savePreferences();});
 for(const id of ['scenario-symbol','scenario-shock'])$(id).addEventListener('input',renderScenario);
 $('security-ranges').addEventListener('click',event=>{const button=event.target.closest('[data-security-range]');if(!button)return;$('security-range').value=button.dataset.securityRange;chooseSegment('security-ranges',button.dataset.securityRange,'securityRange');loadSecurityChart();savePreferences();});
 $('security-range').addEventListener('change',()=>{loadSecurityChart();savePreferences();});
@@ -543,7 +558,8 @@ document.addEventListener('pointermove',event=>{
   const chart=event.target.closest('.chart'),svg=chart?.querySelector('svg[data-points]');if(!svg)return;
   const points=JSON.parse(svg.dataset.points),box=svg.getBoundingClientRect(),fraction=Math.max(0,Math.min(1,((event.clientX-box.left)/box.width*720-3)/653));
   const target=Number(svg.dataset.first)+fraction*(Number(svg.dataset.last)-Number(svg.dataset.first));
-  let index=0;for(let i=1;i<points.length;i++)if(Math.abs(points[i][0]-target)<Math.abs(points[index][0]-target))index=i;
+  let index=svg.dataset.compressed==='true'?Math.round(fraction*(points.length-1)):0;
+  if(svg.dataset.compressed!=='true')for(let i=1;i<points.length;i++)if(Math.abs(points[i][0]-target)<Math.abs(points[index][0]-target))index=i;
   inspectChart(svg,index);
 });
 for(const chart of document.querySelectorAll('.chart')){

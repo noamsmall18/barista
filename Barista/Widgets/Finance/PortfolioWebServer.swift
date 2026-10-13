@@ -128,10 +128,14 @@ final class PortfolioWebServer {
             payload["stale"] = widget.isDataStale || widget.isUsingCachedData || widget.lastFetchFailed || !widget.failedSymbols.isEmpty
             payload["backoffSeconds"] = widget.backoffRemaining
             payload["pollSeconds"] = widget.refreshInterval ?? 5
-            let intraday = widget.intradayPortfolioSeries() ?? []
-            payload["intraday"] = intraday.map { [$0.date.timeIntervalSince1970, $0.value] }
-            payload["benchmark"] = (widget.intradayBenchmarkSeries(matching: intraday.map(\.date), startingAt: intraday.first?.value ?? 0) ?? []).map { [$0.date.timeIntervalSince1970, $0.value] }
-            payload["history"] = PortfolioHistoryService.shared.points(for: widget.config.activePortfolioHistoryID, range: .all)
+            let day = widget.portfolioHistoryPresentation(range: .today)
+            let intraday = day.points
+            payload["intradayEstimated"] = day.estimated
+            payload["intraday"] = intraday.map { [$0.time.timeIntervalSince1970, $0.value] }
+            payload["benchmark"] = (widget.intradayBenchmarkSeries(matching: intraday.map(\.time), startingAt: intraday.first?.value ?? 0) ?? []).map { [$0.date.timeIntervalSince1970, $0.value] }
+            payload["history"] = widget.portfolioHistoryPoints(range: .all, raw: false)
+                .map { [$0.time.timeIntervalSince1970, $0.value] }
+            payload["historyRaw"] = widget.portfolioHistoryPoints(range: .all, raw: true)
                 .map { [$0.time.timeIntervalSince1970, $0.value] }
             respond(connection, body: Self.json(payload), mime: "application/json")
             return

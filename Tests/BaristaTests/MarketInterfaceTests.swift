@@ -84,6 +84,9 @@ final class MarketInterfaceTests: XCTestCase {
         widget.setCash(400)
         turnRunLoop()
         XCTAssertTrue(child.isShown, "quote/config updates must not remove a nested popover's anchor")
+        // Exercise the real close/delegate lifecycle without depending on
+        // display-driven animation frames in a background XCTest process.
+        child.animates = false
         child.close()
         waitForUI { controller.detailPopover == nil }
         XCTAssertNil(controller.detailPopover)
@@ -110,7 +113,7 @@ final class MarketInterfaceTests: XCTestCase {
         instance.showDropdownMenu()
         XCTAssertTrue(instance.popoverController?.isShown == true)
         // The production button handler saves the edit and requests a redraw.
-        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" }?.contentView)
+        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" && $0.isVisible }?.contentView)
         let mode = try XCTUnwrap(allViews(content).compactMap { $0 as? NSButton }.first { $0.action == NSSelectorFromString("displayModeChanged:") && $0.tag == 4 })
         mode.performClick(nil)
         XCTAssertEqual(widget.config.displayMode, .portfolio)

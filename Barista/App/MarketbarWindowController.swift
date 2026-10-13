@@ -30,6 +30,8 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
     private let missingLabel = NSTextField(labelWithString: "")
     private let chart = PortfolioChartView()
     private let chartEmpty = NSTextField(labelWithString: "Your portfolio history will appear here as prices arrive.")
+    private let historyRaw = NSButton(checkboxWithTitle: "Raw", target: nil, action: nil)
+    private let historyNote = NSTextField(labelWithString: "")
     private let rangeControl = NSSegmentedControl(labels: ["1D", "1W", "1M", "3M", "6M", "ALL"], trackingMode: .selectOne, target: nil, action: nil)
     private let modePicker = NSPopUpButton()
     private let colorSwitch = NSButton(checkboxWithTitle: "Color scrolling ticker", target: nil, action: nil)
@@ -134,6 +136,13 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         sidebar.addArrangedSubview(spacer)
         sidebar.addArrangedSubview(button("Research Workspace ↗", #selector(openResearch)))
         sidebar.addArrangedSubview(label("⌘,  Open Marketbar\n⌘⇧Space  Quick actions", size: 10, color: Theme.textFaint))
+        let recovery = button("Backup & Recovery…", #selector(openRecovery))
+        recovery.identifier = NSUserInterfaceItemIdentifier("recovery.open")
+        recovery.isBordered = false
+        recovery.controlSize = .mini
+        recovery.font = .systemFont(ofSize: 10)
+        recovery.contentTintColor = Theme.textMuted
+        sidebar.addArrangedSubview(recovery)
 
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -224,7 +233,11 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         rangeControl.target = self
         rangeControl.action = #selector(changeRange)
         rangeControl.selectedSegment = PortfolioHistoryService.Range.allCases.firstIndex(of: historyRange) ?? 0
-        let chartHeader = NSStackView(views: [label("VALUE OVER TIME", size: 10, weight: .semibold, color: Theme.textFaint), NSView(), rangeControl])
+        historyRaw.target = self
+        historyRaw.action = #selector(changeHistoryRaw)
+        historyRaw.identifier = NSUserInterfaceItemIdentifier("portfolio.history.raw")
+        historyRaw.toolTip = "Inspect original recorded values, including edits and suspect observations."
+        let chartHeader = NSStackView(views: [label("VALUE OVER TIME", size: 10, weight: .semibold, color: Theme.textFaint), NSView(), historyRaw, rangeControl])
         chartCard.addArrangedSubview(chartHeader)
         chartHeader.widthAnchor.constraint(equalTo: chartCard.widthAnchor, constant: -36).isActive = true
         chartCard.addArrangedSubview(chart)
@@ -234,6 +247,10 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         chart.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.chart")
         chartEmpty.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.chart-empty")
         chartCard.addArrangedSubview(chartEmpty)
+        historyNote.font = .systemFont(ofSize: 10)
+        historyNote.textColor = Theme.textMuted
+        historyNote.identifier = NSUserInterfaceItemIdentifier("portfolio.history.note")
+        chartCard.addArrangedSubview(historyNote)
         addFullWidth(chartCard)
 
         let title = NSStackView(views: [label("Watchlist", size: 20, weight: .semibold), NSView(), button("Position", #selector(editPosition)), button("Remove", #selector(removeSymbol))])
@@ -296,6 +313,10 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         addFullWidth(tableScroll)
         addFullWidth(label("Double-click a ticker for its chart, financials and headlines. Return shows only positions with recorded cost basis.", size: 11, color: Theme.textFaint))
         updateData()
+    }
+
+    @objc private func openRecovery() {
+        NSApp.sendAction(#selector(AppDelegate.showRecoveryWindow), to: NSApp.delegate, from: self)
     }
 
     private func buildPreferences() {
@@ -478,14 +499,21 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
             return
         }
         chartEmpty.stringValue = "Your portfolio history will appear here as prices arrive."
-        if historyRange == .today {
-            chart.samples = (widget.intradayPortfolioSeries() ?? []).map { .init(date: $0.date, value: $0.value) }
-            chart.axisStyle = .time
-        } else {
-            chart.samples = PortfolioHistoryService.shared.points(for: widget.config.activePortfolioHistoryID, range: historyRange).map { .init(date: $0.time, value: $0.value) }
-            chart.axisStyle = .date
-        }
-        chart.accent = widget.intensityColor(for: snapshot?.livePercent ?? 0)
+        let presentation = widget.portfolioHistoryPresentation(range: historyRange)
+        let points = presentation.points
+        let originals = Dictionary(uniqueKeysWithValues: widget.portfolioHistoryPoints(range: historyRange, raw: true).map { ($0.time, $0.value) })
+        chart.samples = points.map { .init(date: $0.time, value: $0.value, observedValue: originals[$0.time]) }
+        chart.axisStyle = historyRange.isIntraday ? .time : .date
+        chart.accent = widget.intensityColor(for: points.first.map { first in
+            first.value > 0 ? ((points.last?.value ?? first.value) / first.value - 1) * 100 : 0
+        } ?? 0)
+        historyRaw.state = widget.config.historyShowsRaw && !historyRange.isIntraday ? .on : .off
+        historyRaw.isEnabled = !historyRange.isIntraday
+        historyNote.stringValue = historyRange.isIntraday ? (presentation.estimated ? "Current holdings estimate · Eastern Time" : "Recorded market movement · Eastern Time")
+            : widget.config.historyShowsRaw ? "Recorded totals · market closures compressed"
+            : "Market movement · holding/cash changes adjusted · isolated glitches hidden"
+        chart.toolTip = historyNote.stringValue
+
         chartEmpty.isHidden = chart.samples.count >= 2
     }
 
@@ -599,6 +627,12 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
     @objc private func selectPortfolio() {
         if let id = portfolioPicker.selectedItem?.representedObject as? String { widget.selectPortfolio(id: id); updateData() }
     }
+    @objc private func changeHistoryRaw() {
+        widget.config.historyShowsRaw.toggle()
+        widget.saveConfig()
+        updateData()
+    }
+
     @objc private func changeRange() {
         let ranges = PortfolioHistoryService.Range.allCases
         guard ranges.indices.contains(rangeControl.selectedSegment) else { return }
@@ -641,7 +675,10 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "Delete")
         guard alert.runModal() == .alertSecondButtonReturn else { return }
-        widget.deletePortfolio(id: widget.config.activePortfolioID)
+        guard widget.deletePortfolio(id: widget.config.activePortfolioID) else {
+            problem("The portfolio was kept because a recovery backup could not be saved. Open Backup & Recovery for details.")
+            return
+        }
         updateData()
     }
     @objc private func editCash() {

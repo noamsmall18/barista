@@ -57,6 +57,15 @@ final class InMemoryTestPreferences: UserDefaults {
     override func double(forKey key: String) -> Double { (object(forKey: key) as? NSNumber)?.doubleValue ?? 0 }
     override func synchronize() -> Bool { true }
 
+    override func persistentDomain(forName domainName: String) -> [String: Any]? {
+        dictionaryRepresentation()
+    }
+
+    override func setPersistentDomain(_ domain: [String: Any], forName domainName: String) {
+        lock.lock(); defer { lock.unlock() }
+        values = domain
+    }
+
     override func dictionaryRepresentation() -> [String: Any] {
         lock.lock(); defer { lock.unlock() }
         return values

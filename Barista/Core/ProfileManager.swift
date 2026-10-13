@@ -105,7 +105,11 @@ class ProfileManager {
 
     // MARK: - Persistence
 
+    func reload() { load() }
+
     private func load() {
+        profiles = []
+        activeProfileID = nil
         if let data = AppPreferences.shared.data(forKey: key),
            let decoded = try? JSONDecoder().decode([WidgetProfile].self, from: data) {
             profiles = decoded
@@ -117,7 +121,9 @@ class ProfileManager {
 
     private func persist() {
         if let data = try? JSONEncoder().encode(profiles) {
-            AppPreferences.shared.set(data, forKey: key)
+            RecoveryStore.protect("Layout profile edit") {
+                AppPreferences.shared.set(data, forKey: key)
+            }
         }
     }
 }

@@ -561,6 +561,9 @@ struct StockTickerConfig: Codable, Equatable {
     /// Overlay a benchmark index on the history chart.
     var compareToBenchmark: Bool = false
 
+    /// Original recorded values, with edit flows and suspect observations visible.
+    var historyShowsRaw: Bool = false
+
     /// Collapsed state of the cards below the portfolio summary.
     var historyCollapsed: Bool = false
     var allocationCollapsed: Bool = false
@@ -596,7 +599,7 @@ struct StockTickerConfig: Codable, Equatable {
         case tickerWidth, cryptoCurrency, showVolume, showSparklines, showExtendedHours
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
-        case historyRange, compareToBenchmark
+        case historyRange, compareToBenchmark, historyShowsRaw
         case historyCollapsed, allocationCollapsed
     }
 
@@ -670,6 +673,7 @@ struct StockTickerConfig: Codable, Equatable {
         refreshMode = try c.decodeIfPresent(StockTickerRefreshMode.self, forKey: .refreshMode) ?? .standard
         cryptoCurrency = try c.decodeIfPresent(String.self, forKey: .cryptoCurrency) ?? "usd"
         priceAlerts = try c.decodeIfPresent([String: Double].self, forKey: .priceAlerts) ?? [:]
+        historyShowsRaw = try c.decodeIfPresent(Bool.self, forKey: .historyShowsRaw) ?? false
         historyRange = try c.decodeIfPresent(PortfolioHistoryService.Range.self, forKey: .historyRange) ?? .month
         compareToBenchmark = try c.decodeIfPresent(Bool.self, forKey: .compareToBenchmark) ?? false
         historyCollapsed = try c.decodeIfPresent(Bool.self, forKey: .historyCollapsed) ?? false
@@ -709,6 +713,7 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(refreshMode, forKey: .refreshMode)
         try c.encode(cryptoCurrency, forKey: .cryptoCurrency)
         try c.encode(priceAlerts, forKey: .priceAlerts)
+        try c.encode(historyShowsRaw, forKey: .historyShowsRaw)
         try c.encode(historyRange, forKey: .historyRange)
         try c.encode(compareToBenchmark, forKey: .compareToBenchmark)
         try c.encode(historyCollapsed, forKey: .historyCollapsed)
@@ -794,6 +799,8 @@ class StockTickerWidget: BaristaWidget {
     private var lastStreamUpdateByCoin: [String: Date] = [:]
     private var lastStreamCacheWrite = Date.distantPast
 
+    let historyService: PortfolioHistoryService
+    private let recoveryStore: RecoveryStore?
     private let notificationsEnabled: Bool
     private let researchOpener: () -> Void
     private var dashboardLeaseUntil = Date.distantPast
@@ -1046,21 +1053,105 @@ class StockTickerWidget: BaristaWidget {
 
     /// Snapshots every portfolio's value, not just the active one, so switching
     /// tabs doesn't leave the others with gaps.
-    private func recordPortfolioHistory() {
+    func recordPortfolioHistory(now: Date = Date()) {
         let saved = config.activePortfolioID
+        defer { config.activePortfolioID = saved }
+        func record(_ id: String) {
+            guard !isUsingCachedData, let snapshot = portfolioSnapshot(),
+                  snapshot.missingSymbols.isEmpty,
+                  snapshot.positions.allSatisfy({ position in
+                      let q = position.quote
+                      guard q.currentPrice.isFinite, q.currentPrice > 0,
+                            (q.currency ?? "USD").uppercased() == "USD",
+                            let received = q.receivedAt else { return false }
+                      let age = now.timeIntervalSince1970 - received
+                      return age >= -5 && age <= 6 * 60
+                  }) else { return }
+            let continuous = snapshot.positions.contains { $0.quote.kind == .crypto }
+            let overnight = !PortfolioTradingCalendar.isExtendedSession(now)
+                && PortfolioTradingCalendar.isOvernightSession(now)
+            func overnightPrice(_ quote: MarketQuote) -> Double? {
+                guard overnight, quote.kind == .stock else { return nil }
+                let times = quote.minuteTimes.isEmpty ? quote.sparklineTimes : quote.minuteTimes
+                let values = quote.minuteTimes.isEmpty ? quote.sparkline : quote.minuteCloses
+                guard times.count == values.count, let time = times.last, let value = values.last,
+                      value.isFinite, value > 0 else { return nil }
+                let age = now.timeIntervalSince1970 - time
+                return age >= 0 && age <= 120
+                    && PortfolioTradingCalendar.isOvernightSession(Date(timeIntervalSince1970: time)) ? value : nil
+            }
+            var trading: PortfolioHistoryService.Trading = continuous ? .continuous : .equities
+            if !continuous && !PortfolioTradingCalendar.isExtendedSession(now) {
+                // Poll timestamps are not trade timestamps. An overnight point
+                // requires an actual fresh bar for at least one held position.
+                guard overnight, snapshot.positions.contains(where: { overnightPrice($0.quote) != nil }) else { return }
+                trading = .overnight
+            }
+            let prices = (quotes + indexQuotes).reduce(into: [String: Double]()) { prices, quote in
+                // CLOSED metadata can still carry Friday's regular close. Use
+                // the real overnight bar, or the last extended-hours close for
+                // a held stock that hasn't printed in the overnight session.
+                let post = quote.postMarketPrice.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                let price = overnightPrice(quote) ?? (overnight && quote.kind == .stock ? post : nil) ?? quote.currentPrice
+                if price.isFinite && price > 0 { prices[quote.symbol] = price }
+            }
+            let value = snapshot.positions.reduce(snapshot.cash) { $0 + $1.quantity * (prices[$1.quote.symbol] ?? $1.quote.currentPrice) }
+            historyService.record(portfolioID: id, value: value, trading: trading,
+                                  valuation: .init(holdings: config.holdings.filter { $0.value > 0 },
+                                                   cash: config.cash, prices: prices))
+
+        }
         for portfolio in config.portfolios {
             config.activePortfolioID = portfolio.id
-            if let snapshot = portfolioSnapshot() {
-                PortfolioHistoryService.shared.record(portfolioID: portfolio.id, value: snapshot.total)
-            }
+            record(portfolio.id)
         }
         if config.combinedPortfolioEnabled {
             config.activePortfolioID = Portfolio.combinedID
-            if let snapshot = portfolioSnapshot() {
-                PortfolioHistoryService.shared.record(portfolioID: config.combinedPortfolioHistoryID, value: snapshot.total)
-            }
+            record(config.combinedPortfolioHistoryID)
         }
-        config.activePortfolioID = saved
+    }
+
+    /// Shared presentation for the dropdown, native terminal and research service.
+    var portfolioTradesContinuously: Bool {
+        config.holdings.contains { symbol, quantity in
+            quantity > 0 && (portfolioQuote(for: symbol)?.kind == .crypto
+                || config.coins.contains { (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == symbol })
+        }
+    }
+
+    func portfolioHistoryPoints(range: PortfolioHistoryService.Range,
+                                raw: Bool? = nil) -> [PortfolioHistoryService.Point] {
+        portfolioHistoryPresentation(range: range, raw: raw).points
+    }
+
+    func portfolioHistoryPresentation(range: PortfolioHistoryService.Range,
+                                      raw: Bool? = nil) -> (points: [PortfolioHistoryService.Point], estimated: Bool) {
+        let showRaw = raw ?? (range.isIntraday ? false : config.historyShowsRaw)
+        guard range.isIntraday else {
+            return (historyService.points(for: config.activePortfolioHistoryID, range: range,
+                                          raw: showRaw, continuous: portfolioTradesContinuously), false)
+        }
+        let estimate = (intradayPortfolioSeries() ?? []).map { PortfolioHistoryService.Point(time: $0.date, value: $0.value) }
+        let recorded = historyService.points(for: config.activePortfolioHistoryID, range: .all,
+                                             raw: showRaw, continuous: portfolioTradesContinuously)
+        if let latest = [recorded.last?.time, estimate.last?.time].compactMap({ $0 }).max() {
+            let start = portfolioSessionStart(at: latest)
+            let session = recorded.filter { $0.time >= start }
+            // Recorded observations retain the holdings that actually existed
+            // then. A later edit must never reprice the whole morning's chart.
+            if session.count >= 2 { return (session, false) }
+        }
+        return (estimate, true)
+    }
+
+    private func portfolioSessionStart(at latest: Date) -> Date {
+        if portfolioTradesContinuously { return latest.addingTimeInterval(-24 * 3600) }
+        let cal = PortfolioTradingCalendar.calendar
+        let tradingDay = cal.component(.hour, from: latest) >= 20
+            && PortfolioTradingCalendar.isOvernightSession(latest)
+            ? cal.date(byAdding: .day, value: 1, to: latest)! : latest
+        let priorDay = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: tradingDay))!
+        return cal.date(bySettingHour: 20, minute: 0, second: 0, of: priorDay)!
     }
 
     /// Doubles the wait each time an endpoint throttles us, capped at 10 minutes.
@@ -1088,12 +1179,16 @@ class StockTickerWidget: BaristaWidget {
 
     init(config: StockTickerConfig, notificationsEnabled: Bool,
          initialQuotes: [MarketQuote] = [],
+         historyService: PortfolioHistoryService = .shared,
+         recoveryStore: RecoveryStore? = .shared,
          researchOpener: @escaping () -> Void = ResearchWorkspaceLauncher.open) {
         self.config = config
+        self.historyService = historyService
+        self.recoveryStore = recoveryStore
         self.quotes = initialQuotes
-        self.notificationsEnabled = notificationsEnabled
+        self.notificationsEnabled = notificationsEnabled && !AppPreferences.isRunningTests
         self.researchOpener = researchOpener
-        if notificationsEnabled {
+        if self.notificationsEnabled {
             UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         }
     }
@@ -1110,6 +1205,7 @@ class StockTickerWidget: BaristaWidget {
     }
 
     func start() {
+        guard !AppPreferences.isRunningTests else { return }
         isRunning = true
         lifecycleGeneration += 1
         currentTimerInterval = effectiveRefreshInterval
@@ -2106,8 +2202,10 @@ class StockTickerWidget: BaristaWidget {
                     averageCost rawCost: Double? = nil) {
         guard !config.isCombinedPortfolioActive else { return }
         let normalized = symbol.uppercased()
-        let quantity = rawQuantity.isFinite ? max(0, rawQuantity) : 0
-        let cost = rawCost.flatMap { $0.isFinite ? max(0, $0) : nil }
+        guard rawQuantity.isFinite, rawQuantity >= 0,
+              rawCost.map({ $0.isFinite && $0 >= 0 }) ?? true else { return }
+        let quantity = rawQuantity
+        let cost = rawCost
         // Recorded as a dated adjustment rather than written straight to the
         // cache, so the ledger stays the only source of these numbers.
         config.setQuantity(quantity, for: normalized, averageCost: cost)
@@ -2197,7 +2295,8 @@ class StockTickerWidget: BaristaWidget {
 
     func setCash(_ rawAmount: Double) {
         guard !config.isCombinedPortfolioActive else { return }
-        config.cash = rawAmount.isFinite ? max(0, rawAmount) : 0
+        guard rawAmount.isFinite, rawAmount >= 0 else { return }
+        config.cash = rawAmount
         saveConfig()
         onDisplayUpdate?()
         notifyDataRefresh()
@@ -2227,35 +2326,46 @@ class StockTickerWidget: BaristaWidget {
             let times = quote.minuteTimes.isEmpty ? quote.sparklineTimes : quote.minuteTimes
             let values = quote.minuteCloses.isEmpty ? quote.sparkline : quote.minuteCloses
             guard times.count == values.count, times.count >= 2 else { return nil }
-            series.append((qty, times, values))
+            var observations: [Double: Double] = [:]
+            for (time, value) in zip(times, values) where time.isFinite && value.isFinite && value > 0 {
+                observations[time] = value
+            }
+            let ordered = observations.sorted { $0.key < $1.key }
+            guard ordered.count >= 2 else { return nil }
+            series.append((qty, ordered.map(\.key), ordered.map(\.value)))
         }
 
-        // The grid runs over the window every holding covers, so no point is
-        // computed from a symbol that hadn't started trading yet.
-        guard let gridStart = series.compactMap({ $0.times.first }).max(),
-              let gridEnd = series.compactMap({ $0.times.last }).min(),
-              gridEnd > gridStart else { return nil }
+        // Use actual observation times in the latest session. A minute-by-
+        // minute wall clock grid invents thousands of flat weekend/holiday bars
+        // if a provider response contains a gap between sessions.
+        guard let commonStart = series.compactMap({ $0.times.first }).max(),
+              let commonEnd = series.compactMap({ $0.times.last }).min(),
+              commonEnd > commonStart else { return nil }
+        let continuous = portfolioTradesContinuously
+        let latest = Date(timeIntervalSince1970: commonEnd)
+        let windowStart = portfolioSessionStart(at: latest).timeIntervalSince1970
+        let start = max(commonStart, windowStart)
+        let times = Set(series.flatMap(\.times)).filter { time in
+            guard time >= start, time <= commonEnd else { return false }
+            let date = Date(timeIntervalSince1970: time)
+            return continuous || PortfolioTradingCalendar.isExtendedSession(date)
+                || PortfolioTradingCalendar.isOvernightSession(date)
+        }.sorted()
+        guard times.count >= 2 else { return nil }
 
-        // One point per minute across the session.
-        let minute: Double = 60
-        let startMinute = (gridStart / minute).rounded(.up) * minute
-        let steps = max(1, Int((gridEnd - startMinute) / minute))
-        guard steps >= 1 else { return nil }
-
-        let cashValue = config.cash
         var out: [(date: Date, value: Double)] = []
-        out.reserveCapacity(steps + 1)
-
-        for i in 0...steps {
-            let t = min(startMinute + Double(i) * minute, gridEnd)
-            var total = cashValue
+        out.reserveCapacity(times.count)
+        for time in times {
+            var total = config.cash
             for s in series {
-                guard let price = Self.value(in: s.values, times: s.times, at: t) else { return nil }
+                guard let price = Self.value(in: s.values, times: s.times, at: time) else { return nil }
                 total += price * s.qty
             }
-            out.append((Date(timeIntervalSince1970: t), total))
+            guard total.isFinite else { return nil }
+            out.append((Date(timeIntervalSince1970: time), total))
         }
-        return out.count >= 2 ? out : nil
+        return out
+
     }
 
     /// A benchmark curve for today, read off the index's own intraday bars and
@@ -2275,12 +2385,14 @@ class StockTickerWidget: BaristaWidget {
         // Anchor on the index's price at the portfolio's first timestamp, so both
         // lines begin together.
         let t0 = times[0].timeIntervalSince1970
-        guard let base = Self.value(in: values, times: series, at: t0), base > 0 else { return nil }
+        guard let first = series.first, let last = series.last, t0 >= first, t0 <= last,
+              let base = Self.value(in: values, times: series, at: t0), base.isFinite, base > 0 else { return nil }
 
         var out: [(date: Date, value: Double, raw: Double)] = []
         for date in times {
-            guard let price = Self.value(in: values, times: series,
-                                         at: date.timeIntervalSince1970) else { continue }
+            guard date.timeIntervalSince1970 >= first, date.timeIntervalSince1970 <= last,
+                  let price = Self.value(in: values, times: series,
+                                         at: date.timeIntervalSince1970), price.isFinite, price > 0 else { continue }
             out.append((date, startValue * (price / base), price))
         }
         // Same honesty rule as the daily path: don't draw through gaps.
@@ -2312,7 +2424,6 @@ class StockTickerWidget: BaristaWidget {
     }
 
     private func portfoliosChanged() {
-        recordPortfolioHistory()
         saveConfig()
         onDisplayUpdate?()
         notifyDataRefresh()
@@ -2366,12 +2477,16 @@ class StockTickerWidget: BaristaWidget {
     func deletePortfolio(id: String) -> Bool {
         guard config.portfolios.count > 1,
               let idx = config.portfolios.firstIndex(where: { $0.id == id }) else { return false }
+        // History is deleted before config persistence; protect both together.
+        historyService.flushPendingWrites()
+        do { _ = try recoveryStore?.capture(reason: "Before portfolio deletion", force: true) }
+        catch { return false }
         let wasActive = config.activePortfolioID == id
         config.portfolios.remove(at: idx)
         if wasActive {
             config.activePortfolioID = config.portfolios[max(0, idx - 1)].id
         }
-        PortfolioHistoryService.shared.forget(portfolioID: id)
+        historyService.forget(portfolioID: id)
         portfoliosChanged()
         return true
     }

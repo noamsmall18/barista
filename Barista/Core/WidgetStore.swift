@@ -49,7 +49,9 @@ class WidgetStore {
 
     func save(_ widgets: [SavedWidget]) {
         if let data = try? JSONEncoder().encode(widgets) {
-            AppPreferences.shared.set(data, forKey: key)
+            RecoveryStore.protect("Widget or portfolio edit") {
+                AppPreferences.shared.set(data, forKey: key)
+            }
         }
     }
 
@@ -85,17 +87,19 @@ class WidgetStore {
     }
 
     func removeWidget(instanceID: UUID) {
-        var widgets = loadActiveWidgets()
-        // Stash config to memory before removing
-        if let widget = widgets.first(where: { $0.instanceID == instanceID }),
-           let config = widget.configData {
-            saveMemory(config, for: widget.widgetID)
+        RecoveryStore.protect("Widget removal") {
+            var widgets = loadActiveWidgets()
+            // Stash config to memory before removing
+            if let widget = widgets.first(where: { $0.instanceID == instanceID }),
+               let config = widget.configData {
+                saveMemory(config, for: widget.widgetID)
+            }
+            widgets.removeAll { $0.instanceID == instanceID }
+            for i in widgets.indices {
+                widgets[i].order = i
+            }
+            save(widgets)
         }
-        widgets.removeAll { $0.instanceID == instanceID }
-        for i in widgets.indices {
-            widgets[i].order = i
-        }
-        save(widgets)
     }
 
     // MARK: - Widget Memory (persists config across add/remove)
@@ -109,7 +113,9 @@ class WidgetStore {
         var all = loadAllMemory()
         all[widgetID] = data
         if let encoded = try? JSONEncoder().encode(all) {
-            AppPreferences.shared.set(encoded, forKey: memoryKey)
+            RecoveryStore.protect("Saved widget settings") {
+                AppPreferences.shared.set(encoded, forKey: memoryKey)
+            }
         }
     }
 
@@ -121,12 +127,14 @@ class WidgetStore {
     }
 
     func updateConfig(instanceID: UUID, configData: Data) {
-        var widgets = loadActiveWidgets()
-        if let idx = widgets.firstIndex(where: { $0.instanceID == instanceID }) {
-            widgets[idx].configData = configData
-            save(widgets)
-            // Also update memory so it persists even if widget is removed later
-            saveMemory(configData, for: widgets[idx].widgetID)
+        RecoveryStore.protect("Portfolio or widget edit") {
+            var widgets = loadActiveWidgets()
+            if let idx = widgets.firstIndex(where: { $0.instanceID == instanceID }) {
+                widgets[idx].configData = configData
+                save(widgets)
+                // Also update memory so it persists even if widget is removed later
+                saveMemory(configData, for: widgets[idx].widgetID)
+            }
         }
     }
 

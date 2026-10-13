@@ -16,10 +16,14 @@ final class PortfolioChartView: NSView {
         /// For benchmark samples, the index's own price before rebasing, so the
         /// hover readout can show what SPY actually cost as well as its move.
         var raw: Double? = nil
+        var observedValue: Double? = nil
     }
 
     /// The portfolio's own value over the selected range.
-    var samples: [Sample] = [] { didSet { rebuildGeometry(); needsDisplay = true } }
+    var samples: [Sample] = [] { didSet {
+        if let hoverIndex, !samples.indices.contains(hoverIndex) { self.hoverIndex = nil }
+        rebuildGeometry(); needsDisplay = true
+    } }
 
     /// Optional comparison line, already rebased to the portfolio's opening value
     /// so the two are compared on percentage growth rather than dollars.
@@ -36,6 +40,7 @@ final class PortfolioChartView: NSView {
 
     private var axisFormatter: DateFormatter {
         let f = DateFormatter()
+        f.timeZone = PortfolioTradingCalendar.calendar.timeZone
         f.dateFormat = axisStyle == .time ? "h:mm a" : "MMM d"
         return f
     }
@@ -235,8 +240,9 @@ final class PortfolioChartView: NSView {
             str.draw(at: NSPoint(x: x, y: y))
         }
 
-        mark(hiIdx, label: Self.compactMoney(samples[hiIdx].value), above: true)
-        mark(loIdx, label: Self.compactMoney(samples[loIdx].value), above: false)
+        let precise = highest - lowest < abs(samples[hiIdx].value) * 0.01
+        mark(hiIdx, label: precise ? Self.money(samples[hiIdx].value) : Self.compactMoney(samples[hiIdx].value), above: true)
+        mark(loIdx, label: precise ? Self.money(samples[loIdx].value) : Self.compactMoney(samples[loIdx].value), above: false)
     }
 
     private func drawDateAxis(in r: NSRect) {
@@ -273,6 +279,7 @@ final class PortfolioChartView: NSView {
         // Readout: date, value, and change from the start of the range.
         let sample = samples[index]
         let fmt = axisFormatter
+        fmt.dateFormat = "MMM d, h:mm a 'ET'"
         let base = samples[0].value
         let delta = sample.value - base
         let pct = base > 0 ? delta / base * 100 : 0
@@ -295,6 +302,9 @@ final class PortfolioChartView: NSView {
         line.append(NSAttributedString(string: Self.money(sample.value) + "  ", attributes: valueAttrs))
         line.append(NSAttributedString(string: String(format: "%@%.1f%%", pct >= 0 ? "+" : "", pct),
                                        attributes: deltaAttrs))
+        if let observed = sample.observedValue, abs(observed - sample.value) > 0.01 {
+            line.append(NSAttributedString(string: "  Recorded " + Self.money(observed), attributes: dateAttrs))
+        }
 
         // Second line: where the benchmark stood at the same moment, both its own
         // price and its move over the range, so the two are directly comparable.
@@ -352,10 +362,30 @@ final class PortfolioChartView: NSView {
     /// Benchmark sample closest in time to `date`, since the benchmark only has
     /// points for days the index also traded.
     private func benchmarkSample(nearestTo date: Date) -> Sample? {
-        guard let benchmark, !benchmark.isEmpty else { return nil }
+        guard let benchmark, let first = benchmark.first, let last = benchmark.last,
+              date >= first.date, date <= last.date else { return nil }
         return benchmark.min {
             abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
         }
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        guard !samples.isEmpty else { return }
+        switch event.keyCode {
+        case 123: hoverIndex = max(0, (hoverIndex ?? samples.count) - 1)
+        case 124: hoverIndex = min(samples.count - 1, (hoverIndex ?? -1) + 1)
+        case 115: hoverIndex = 0
+        case 119: hoverIndex = samples.count - 1
+        case 53: hoverIndex = nil
+        default: super.keyDown(with: event)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        mouseMoved(with: event)
     }
 
     // MARK: - Hover tracking

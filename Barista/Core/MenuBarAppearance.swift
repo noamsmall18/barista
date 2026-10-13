@@ -204,7 +204,9 @@ struct MenuBarAppearance: Codable, Equatable {
 
     func save() {
         if let data = try? JSONEncoder().encode(self) {
-            AppPreferences.shared.set(data, forKey: MenuBarAppearance.key)
+            RecoveryStore.protect("Appearance edit") {
+                AppPreferences.shared.set(data, forKey: MenuBarAppearance.key)
+            }
         }
     }
 }

@@ -95,7 +95,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         dashboard.frame = NSRect(x: pad, y: y, width: cw, height: 36)
         dashboard.setAccessibilityLabel("Open portfolio research webpage")
         docView.addSubview(dashboard)
-        y += 46
+        y += 42
 
         addFeedStatus(y: &y, pad: pad, cw: cw)
 
@@ -179,6 +179,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
     }
 
     @objc private func openDashboard() { widget?.openResearchDashboard() }
+
+    @objc private func openRecovery() {
+        NSApp.sendAction(#selector(AppDelegate.showRecoveryWindow), to: NSApp.delegate, from: self)
+    }
 
     /// Keep data age and failures visible without making users infer whether a
     /// quiet ticker is current. The widget's freshness string distinguishes live
@@ -466,11 +470,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
     private func historyPoints(for portfolioID: String,
                                range: PortfolioHistoryService.Range) -> [PortfolioHistoryService.Point] {
         guard let w = widget else { return [] }
-        if range.isIntraday {
-            return (w.intradayPortfolioSeries() ?? [])
-                .map { PortfolioHistoryService.Point(time: $0.date, value: $0.value) }
-        }
-        return PortfolioHistoryService.shared.points(for: portfolioID, range: range)
+        return w.portfolioHistoryPoints(range: range)
     }
 
     private func addHistorySection(_ pv: PortfolioSnapshot, to panel: NSView, top: CGFloat, cw: CGFloat) {
@@ -502,7 +502,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
             }
         }
 
-        addSectionHeaderRow(to: panel, title: "HISTORY", top: top, cw: cw,
+        addSectionHeaderRow(to: panel, title: w.config.historyShowsRaw && !range.isIntraday ? "RECORDED" : "PERFORMANCE", top: top, cw: cw,
                             collapsed: collapsed, summary: summary,
                             reserveRight: collapsed ? 0 : 200,
                             action: #selector(historyCollapseToggled))
@@ -512,14 +512,14 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
 
         var cursor = top + 22 + 6
         guard hasChart else {
-            let totalSamples = PortfolioHistoryService.shared.sampleCount(for: w.config.activePortfolioHistoryID)
+            let totalSamples = w.historyService.sampleCount(for: w.config.activePortfolioHistoryID)
             let message: String
             if range.isIntraday {
                 message = "No intraday data yet - it fills in as quotes arrive during the session."
             } else if totalSamples == 0 {
-                message = "Tracking starts now - the chart appears once there are two days of history."
+                message = "Tracking starts during trading hours; two observations are needed."
             } else {
-                message = "One day recorded so far. The chart appears tomorrow."
+                message = "Waiting for another trading observation in this range."
             }
             let note = NSTextField(labelWithString: message)
             note.font = NSFont.systemFont(ofSize: 9.5, weight: .regular)
@@ -536,7 +536,12 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         let chart = PortfolioChartView(frame: NSRect(x: 10, y: cursor, width: cw - 12, height: 104))
         chart.accent = tint
         chart.axisStyle = range.isIntraday ? .time : .date
-        chart.samples = points.map { PortfolioChartView.Sample(date: $0.time, value: $0.value) }
+        let originals = Dictionary(uniqueKeysWithValues: w.portfolioHistoryPoints(range: range, raw: true).map { ($0.time, $0.value) })
+        chart.samples = points.map { PortfolioChartView.Sample(date: $0.time, value: $0.value, observedValue: originals[$0.time]) }
+        chart.toolTip = range.isIntraday
+            ? (w.portfolioHistoryPresentation(range: range).estimated ? "Intraday estimate using current holdings. Times shown in Eastern Time." : "Recorded market movement; holding/cash changes adjusted. Times shown in Eastern Time.")
+            : (w.config.historyShowsRaw ? "Original recorded totals. Market closures are compressed."
+               : "Market movement rebased to the latest total. Holding/cash changes are neutralized; isolated glitches are hidden. Use Raw to inspect recorded values.")
         if w.config.compareToBenchmark {
             let rebased = range.isIntraday
                 ? w.intradayBenchmarkSeries(matching: points.map(\.time), startingAt: values.first ?? 0)
@@ -766,9 +771,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
             if let first = points.first?.time, let last = points.last?.time {
                 parts.append(("\(tf.string(from: first)) - \(tf.string(from: last))", Theme.textGhost))
             }
-            parts.append(("\(points.count) samples", Theme.textGhost))
+            let estimated = w.portfolioHistoryPresentation(range: range).estimated
+            parts.append(("\(points.count) pts · " + (estimated ? "estimate" : "recorded"), Theme.textGhost))
         } else {
-            if let moves = PortfolioHistoryService.shared.extremeMoves(for: portfolioID, range: range) {
+            if let moves = PortfolioHistoryService.extremeMoves(in: points) {
                 parts.append((String(format: "Best %@ %+.1f%%", fmt.string(from: moves.best.day), moves.best.pct),
                               Theme.green.withAlphaComponent(0.8)))
                 parts.append((String(format: "Worst %@ %+.1f%%", fmt.string(from: moves.worst.day), moves.worst.pct),
@@ -789,8 +795,17 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         }
         let stats = NSTextField(labelWithAttributedString: line)
         stats.lineBreakMode = .byTruncatingTail
-        stats.frame = NSRect(x: 12, y: top + 2, width: cw - 108, height: 12)
+        stats.frame = NSRect(x: 12, y: top + 2, width: cw - 154, height: 12)
         panel.addSubview(stats)
+
+        let raw = NSButton(checkboxWithTitle: "Raw", target: self, action: #selector(historyRawToggled))
+        raw.identifier = NSUserInterfaceItemIdentifier("portfolio.history.raw")
+        raw.state = w.config.historyShowsRaw && !range.isIntraday ? .on : .off
+        raw.isEnabled = !range.isIntraday
+        raw.font = NSFont.systemFont(ofSize: 8.5)
+        raw.frame = NSRect(x: cw - 144, y: top, width: 48, height: 17)
+        raw.toolTip = "Show original recorded totals, including holding/cash edits and suspect observations. Saved history is never altered by filtering."
+        panel.addSubview(raw)
 
         let on = w.config.compareToBenchmark
         let available = chart.benchmark != nil
@@ -835,6 +850,13 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         let ranges = PortfolioHistoryService.Range.allCases
         guard ranges.indices.contains(sender.tag) else { return }
         w.config.historyRange = ranges[sender.tag]
+        w.saveConfig()
+        rebuildContent()
+    }
+
+    @objc private func historyRawToggled() {
+        guard let w = widget else { return }
+        w.config.historyShowsRaw.toggle()
         w.saveConfig()
         rebuildContent()
     }
@@ -1272,7 +1294,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
 
     // MARK: - Failed Row
 
-    private func addFailedRow(_ symbol: String, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
+    func addFailedRow(_ symbol: String, y: inout CGFloat, pad: CGFloat, cw: CGFloat) {
         let card = NSView(frame: NSRect(x: pad - 4, y: y, width: cw + 8, height: 36))
         card.wantsLayer = true; card.layer?.cornerRadius = 8
         card.layer?.backgroundColor = Theme.redBg.cgColor
@@ -1296,9 +1318,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
 
         let xBtn = NSButton(frame: NSRect(x: cw - 20, y: 10, width: 16, height: 16))
         xBtn.isBordered = false; xBtn.title = ""
-        xBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove")
-        xBtn.contentTintColor = Theme.red.withAlphaComponent(0.5); xBtn.target = self; xBtn.action = #selector(removeClicked(_:))
-        xBtn.identifier = NSUserInterfaceItemIdentifier("stock:\(symbol)")
+        xBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Retry quote")
+        xBtn.contentTintColor = Theme.red.withAlphaComponent(0.5); xBtn.target = self; xBtn.action = #selector(retryQuoteClicked(_:))
+        xBtn.identifier = NSUserInterfaceItemIdentifier("retry:stock:\(symbol)")
+        xBtn.toolTip = "Retry loading this quote. Your position and trade history are preserved."
         card.addSubview(xBtn)
 
         y += 40
@@ -1324,9 +1347,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
 
         let xBtn = NSButton(frame: NSRect(x: cw - 20, y: 10, width: 16, height: 16))
         xBtn.isBordered = false; xBtn.title = ""
-        xBtn.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Remove")
-        xBtn.contentTintColor = Theme.textFaint; xBtn.target = self; xBtn.action = #selector(removeClicked(_:))
+        xBtn.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: "Retry quote")
+        xBtn.contentTintColor = Theme.textFaint; xBtn.target = self; xBtn.action = #selector(retryQuoteClicked(_:))
         xBtn.identifier = NSUserInterfaceItemIdentifier("\(kind.rawValue):\(symbol)")
+        xBtn.toolTip = "Retry loading this quote. Your position and trade history are preserved."
         card.addSubview(xBtn)
 
         y += 40
@@ -1817,6 +1841,15 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         footer.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.02).cgColor
         docView.addSubview(footer)
 
+        let recovery = NSButton(title: "Backup & Recovery…", target: self, action: #selector(openRecovery))
+        recovery.identifier = NSUserInterfaceItemIdentifier("recovery.open")
+        recovery.isBordered = false
+        recovery.controlSize = .mini
+        recovery.font = .systemFont(ofSize: 9)
+        recovery.contentTintColor = Theme.textMuted
+        recovery.frame = NSRect(x: 4, y: 6, width: 112, height: 18)
+        footer.addSubview(recovery)
+
         let refreshBtn = NSButton(frame: NSRect(x: cw / 2 - 42, y: 6, width: 84, height: 18))
         refreshBtn.isBordered = false
         refreshBtn.wantsLayer = true
@@ -1866,6 +1899,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
     }
 
     // MARK: - Actions
+
+    @objc private func retryQuoteClicked(_ sender: NSButton) {
+        widget?.refreshNow()
+    }
 
     @objc private func removeClicked(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue, let w = widget else { return }
@@ -2056,7 +2093,12 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
             guard confirm.runModal() == .alertFirstButtonReturn else { return }
         }
 
-        w.deletePortfolio(id: active.id)
+        if !w.deletePortfolio(id: active.id) {
+            let problem = NSAlert()
+            problem.messageText = "Your portfolio was kept"
+            problem.informativeText = "A recovery backup could not be saved. Open Backup & Recovery for details."
+            problem.runModal()
+        }
         rebuildContent()
     }
 

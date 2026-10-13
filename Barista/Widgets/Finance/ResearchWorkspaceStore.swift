@@ -17,6 +17,12 @@ enum ResearchWorkspaceStore {
 
     @discardableResult
     static func save(_ data: Data, defaults: UserDefaults = ResearchWorkspaceDefaults.shared) -> Bool {
+        // Test callers always use their supplied isolated preferences.
+        guard !AppPreferences.isRunningTests else { return saveUnlocked(data, defaults: defaults) }
+        return RecoveryStore.protect("Research workspace edit") { saveUnlocked(data, defaults: defaults) }
+    }
+
+    private static func saveUnlocked(_ data: Data, defaults: UserDefaults) -> Bool {
         guard data.count <= 245_760,
               let update = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               !update.isEmpty, Set(update.keys).isSubset(of: ["symbol", "note", "preferences"]) else { return false }

@@ -201,7 +201,7 @@ final class CombinedPortfolioTests: XCTestCase {
         defer { instance.popoverController?.dismiss(); NSStatusBar.system.removeStatusItem(item) }
         instance.showDropdownMenu()
         XCTAssertTrue(instance.popoverController?.isShown == true)
-        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" }?.contentView)
+        let content = try XCTUnwrap(NSApp.windows.first { $0.title == "Menu bar dropdown" && $0.isVisible }?.contentView)
         let toggle = try XCTUnwrap(allViews(content).compactMap { $0 as? NSButton }.first {
             $0.identifier?.rawValue == "portfolio.combined.toggle"
         })
