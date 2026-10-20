@@ -22,6 +22,7 @@ final class StatusDropdownPanel: NSPanel {
 final class PopoverController {
     private var panel: StatusDropdownPanel?
     private weak var anchorButton: NSStatusBarButton?
+    private var lastMouseDownDismissal = -TimeInterval.infinity
     private var monitors: [Any] = []
     private var spaceObserver: Any?
     var onDismiss: (() -> Void)?
@@ -66,8 +67,8 @@ final class PopoverController {
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
 
-        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
-            self?.dismissIfOutside(at: NSEvent.mouseLocation)
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            self?.handleGlobalMouseDown(event)
         }) { monitors.append(monitor) }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             guard let self, let panel = self.panel else { return event }
@@ -77,8 +78,9 @@ final class PopoverController {
             }
             // Let nested research popovers and modal editors handle their clicks.
             if event.type != .keyDown, event.window !== panel,
+               event.window !== self.anchorButton?.window,
                event.window?.level == .normal, NSApp.modalWindow == nil {
-                self.dismiss()
+                self.dismiss(forMouseDown: event)
             }
             return event
         }) { monitors.append(monitor) }
@@ -87,16 +89,34 @@ final class PopoverController {
         ) { [weak self] _ in self?.dismiss() }
     }
 
-    func dismissIfOutside(at screenPoint: NSPoint) {
+    func handleGlobalMouseDown(_ event: NSEvent) {
+        // Use the position at the time of the press, not the current pointer,
+        // which may have moved while this event waited on the main thread.
+        let point = event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
+        dismissIfOutside(at: point, mouseDown: event)
+    }
+
+    func wasDismissed(byMouseDown event: NSEvent) -> Bool {
+        event.timestamp <= lastMouseDownDismissal
+    }
+
+    private func dismiss(forMouseDown event: NSEvent) {
+        lastMouseDownDismissal = max(lastMouseDownDismissal, event.timestamp)
+        dismiss()
+    }
+
+    func dismissIfOutside(at screenPoint: NSPoint, mouseDown event: NSEvent? = nil) {
         guard let panel else { return }
-        // The system can report the status-item mouse-down before its mouse-up
-        // action. Leave that click to the button's toggle; dismissing here would
-        // make the same click reopen the dropdown on mouse-up.
+        // Status-item presses belong to the button's toggle, so its event and
+        // the outside-click monitor cannot both handle the same anchor press.
         if let button = anchorButton, let window = button.window {
             let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
             if anchor.contains(screenPoint) { return }
         }
-        if !panel.frame.contains(screenPoint) { dismiss() }
+        if !panel.frame.contains(screenPoint) {
+            if let event { dismiss(forMouseDown: event) }
+            else { dismiss() }
+        }
     }
 
     func dismiss() {

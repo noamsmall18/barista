@@ -9,6 +9,7 @@ class WidgetInstance {
     private var refreshTimer: Timer?
     private var cycleTimer: Timer?
     private var clickMonitor: Any?
+    private var lastInteractivePressTimestamp = -TimeInterval.infinity
     private(set) var popoverController: PopoverController?
     var order: Int
     var isEnabled: Bool = true
@@ -66,7 +67,18 @@ class WidgetInstance {
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
 
-        if event.type == .rightMouseUp ||
+        if widget.hasInteractiveDropdown {
+            // Toggle on press, never on release: an outside-click monitor can
+            // dismiss the panel during tracking, before mouse-up is delivered.
+            if event.type == .leftMouseUp || event.type == .rightMouseUp { return }
+            if event.type == .leftMouseDown || event.type == .rightMouseDown {
+                guard event.timestamp > lastInteractivePressTimestamp else { return }
+                lastInteractivePressTimestamp = event.timestamp
+                guard popoverController?.wasDismissed(byMouseDown: event) != true else { return }
+            }
+        }
+
+        if event.type == .rightMouseDown || event.type == .rightMouseUp ||
            event.modifierFlags.contains(.control) {
             // Right-click or Ctrl-click: show dropdown menu
             showDropdownMenu()
@@ -276,7 +288,7 @@ class WidgetInstance {
         if widget.hasInteractiveDropdown {
             item.button?.target = self
             item.button?.action = #selector(statusItemClicked(_:))
-            item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            item.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
             item.menu = nil
         }
     }
