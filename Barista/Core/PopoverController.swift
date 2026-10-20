@@ -21,6 +21,7 @@ final class StatusDropdownPanel: NSPanel {
 
 final class PopoverController {
     private var panel: StatusDropdownPanel?
+    private weak var anchorButton: NSStatusBarButton?
     private var monitors: [Any] = []
     private var spaceObserver: Any?
     var onDismiss: (() -> Void)?
@@ -61,12 +62,12 @@ final class PopoverController {
         wrapper.addSubview(content)
         panel.contentView = wrapper
         self.panel = panel
+        anchorButton = button
         panel.makeKeyAndOrderFront(nil)
         panel.orderFrontRegardless()
 
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
-            guard let self, let panel = self.panel else { return }
-            if !panel.frame.contains(NSEvent.mouseLocation) { self.dismiss() }
+            self?.dismissIfOutside(at: NSEvent.mouseLocation)
         }) { monitors.append(monitor) }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown], handler: { [weak self] event in
             guard let self, let panel = self.panel else { return event }
@@ -86,6 +87,18 @@ final class PopoverController {
         ) { [weak self] _ in self?.dismiss() }
     }
 
+    func dismissIfOutside(at screenPoint: NSPoint) {
+        guard let panel else { return }
+        // The system can report the status-item mouse-down before its mouse-up
+        // action. Leave that click to the button's toggle; dismissing here would
+        // make the same click reopen the dropdown on mouse-up.
+        if let button = anchorButton, let window = button.window {
+            let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+            if anchor.contains(screenPoint) { return }
+        }
+        if !panel.frame.contains(screenPoint) { dismiss() }
+    }
+
     func dismiss() {
         panel?.orderOut(nil)
         // Closing an unreleased NSPanel can leave its content attached. Detach
@@ -93,6 +106,7 @@ final class PopoverController {
         panel?.contentView = nil
         panel?.close()
         panel = nil
+        anchorButton = nil
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors.removeAll()
         if let spaceObserver { NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver) }
