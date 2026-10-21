@@ -76,6 +76,7 @@ class WidgetInstance {
                 lastInteractivePressTimestamp = event.timestamp
                 guard popoverController?.wasDismissed(byMouseDown: event) != true else { return }
             }
+            if popoverController?.isShown != true, popoverController?.consumeMenuBarDismissal() == true { return }
         }
 
         if event.type == .rightMouseDown || event.type == .rightMouseUp ||

@@ -159,6 +159,41 @@ final class DropdownToggleTests: XCTestCase {
         XCTAssertTrue(dropdown.isShown)
     }
 
+    private func globalPress(at point: NSPoint) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
+            eventNumber: 3, clickCount: 1, pressure: 1))
+    }
+
+    func testMenuBarPressSeenByGlobalMonitorThenForwardedAsNewPressStaysClosed() throws {
+        let instance = fixture()
+        defer { instance.deactivate() }
+        try nativeClick(instance)
+        let dropdown = try XCTUnwrap(instance.popoverController)
+        XCTAssertTrue(dropdown.isShown)
+        let screen = try XCTUnwrap(instance.statusItem?.button?.window?.screen ?? NSScreen.main)
+        // The press lands in the menu bar strip but not where AppKit currently
+        // says the anchor is (another display's menu bar, or moved geometry).
+        dropdown.handleGlobalMouseDown(try globalPress(at: NSPoint(x: screen.frame.minX + 4, y: screen.frame.maxY - 2)))
+        XCTAssertFalse(dropdown.isShown)
+        // macOS then forwards that press to the status button as a newer event.
+        try forwardAction(instance)
+        XCTAssertFalse(dropdown.isShown, "the forwarded menu-bar press must not reopen the dropdown it just closed")
+        try nativeClick(instance)
+        XCTAssertTrue(dropdown.isShown, "the next real press still opens it")
+    }
+
+    func testPressOutsideMenuBarDoesNotSwallowNextStatusPress() throws {
+        let instance = fixture()
+        defer { instance.deactivate() }
+        try nativeClick(instance)
+        let dropdown = try XCTUnwrap(instance.popoverController)
+        dropdown.handleGlobalMouseDown(try globalPress(at: NSPoint(x: -100000, y: -100000)))
+        XCTAssertFalse(dropdown.isShown)
+        try nativeClick(instance)
+        XCTAssertTrue(dropdown.isShown, "clicking elsewhere then on the status item must reopen at once")
+    }
+
     func testControlAndRightClickStillToggleAndRightReleaseDoesNotReopen() throws {
         let instance = fixture()
         defer { instance.deactivate() }

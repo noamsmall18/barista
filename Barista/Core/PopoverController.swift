@@ -23,6 +23,7 @@ final class PopoverController {
     private var panel: StatusDropdownPanel?
     private weak var anchorButton: NSStatusBarButton?
     private var lastMouseDownDismissal = -TimeInterval.infinity
+    private var menuBarDismissalUptime = -TimeInterval.infinity
     private var monitors: [Any] = []
     private var spaceObserver: Any?
     var onDismiss: (() -> Void)?
@@ -30,6 +31,7 @@ final class PopoverController {
 
     func show(content: NSView, size: NSSize, relativeTo button: NSStatusBarButton) {
         dismiss()
+        menuBarDismissalUptime = -TimeInterval.infinity
         guard let anchorWindow = button.window else { return }
         let anchor = anchorWindow.convertToScreen(button.convert(button.bounds, to: nil))
         let screen = anchorWindow.screen ?? NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
@@ -114,8 +116,28 @@ final class PopoverController {
             if anchor.contains(screenPoint) { return }
         }
         if !panel.frame.contains(screenPoint) {
+            if event != nil, Self.isInMenuBar(screenPoint) {
+                menuBarDismissalUptime = ProcessInfo.processInfo.systemUptime
+            }
             if let event { dismiss(forMouseDown: event) }
             else { dismiss() }
+        }
+    }
+
+    /// macOS can show a status-item press to the outside-click monitor first and
+    /// then forward it to the button as a newer event (for example from another
+    /// display's menu bar). That forwarded toggle belongs to the press that just
+    /// closed the dropdown, so it must not reopen it.
+    func consumeMenuBarDismissal() -> Bool {
+        defer { menuBarDismissalUptime = -TimeInterval.infinity }
+        return ProcessInfo.processInfo.systemUptime - menuBarDismissalUptime < 1.5
+    }
+
+    static func isInMenuBar(_ point: NSPoint) -> Bool {
+        NSScreen.screens.contains { screen in
+            let height = max(NSStatusBar.system.thickness, screen.frame.maxY - screen.visibleFrame.maxY)
+            return point.x >= screen.frame.minX && point.x <= screen.frame.maxX &&
+                point.y <= screen.frame.maxY && point.y >= screen.frame.maxY - height
         }
     }
 
