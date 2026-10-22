@@ -66,6 +66,21 @@ final class MarketInterfaceTests: XCTestCase {
         try preview(detail.view, named: "ticker-detail")
     }
 
+    func testOverviewShowsDistanceFromAllTimeHighAndLow() throws {
+        _ = NSApplication.shared
+        var bitcoin = MarketQuote(symbol: "BTC", price: 60_000, change: 1.2, kind: .crypto,
+                                  dayHigh: 61_000, dayLow: 59_000, sparkline: [59_000, 60_000])
+        bitcoin.allTimeHigh = 80_000
+        bitcoin.allTimeLow = 60
+        let widget = StockTickerWidget(config: StockTickerConfig(symbols: [], coins: ["bitcoin"]),
+                                       notificationsEnabled: false, initialQuotes: [bitcoin])
+        let detail = StockDetailPopoverController(widget: widget, quote: bitcoin, fetchesRemoteData: false)
+        let labels = allViews(detail.view).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains("ALL-TIME RANGE"))
+        XCTAssertTrue(labels.contains("-25.0% off high · +99,900% off low"))
+        try preview(detail.view, named: "ticker-detail-all-time")
+    }
+
     func testClickingTickerOpensChildAndClosingParentClosesChild() throws {
         _ = NSApplication.shared
         let widget = fixtureWidget()

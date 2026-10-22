@@ -81,6 +81,8 @@ final class StockPriceHistoryService {
 
     private let cacheQueue = DispatchQueue(label: "barista.stockpricehistory.cache")
     private var cache: [String: StockPriceHistory] = [:]
+    private var allTimeCache: [String: (high: Double, low: Double, fetchedAt: Date)] = [:]
+    private static let allTimeCacheAge: TimeInterval = 30 * 60
 
     private init() {}
 
@@ -115,6 +117,52 @@ final class StockPriceHistoryService {
                 DispatchQueue.main.async { completion(.failure(error)) }
             }
         }
+    }
+
+    /// Highest high and lowest low across the symbol's whole trading history.
+    /// Coarse bars keep the payload small; each bar's high and low still cover
+    /// every trade inside it, so the extremes are exact (split-adjusted).
+    func fetchAllTimeRange(symbol: String, completion: @escaping (Result<(high: Double, low: Double), Error>) -> Void) {
+        let upper = symbol.uppercased()
+        let cached: (high: Double, low: Double, fetchedAt: Date)? = cacheQueue.sync { allTimeCache[upper] }
+        if let cached, Date().timeIntervalSince(cached.fetchedAt) < Self.allTimeCacheAge {
+            DispatchQueue.main.async { completion(.success((cached.high, cached.low))) }
+            return
+        }
+        let safe = upper.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? upper
+        guard let url = URL(string: "https://query1.finance.yahoo.com/v8/finance/chart/\(safe)?interval=1mo&range=max") else {
+            DispatchQueue.main.async { completion(.failure(URLError(.badURL))) }
+            return
+        }
+        DataFetcher.shared.fetch(url: url, maxAge: Self.allTimeCacheAge) { [weak self] result in
+            guard let self else { return }
+            let parsed = result.flatMap { data in
+                Result { try Self.parseAllTimeRange(data: data) }
+            }
+            if case .success(let range) = parsed {
+                self.cacheQueue.sync { self.allTimeCache[upper] = (range.high, range.low, Date()) }
+            }
+            DispatchQueue.main.async { completion(parsed) }
+        }
+    }
+
+    static func parseAllTimeRange(data: Data) throws -> (high: Double, low: Double) {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let chart = json["chart"] as? [String: Any],
+              let results = chart["result"] as? [[String: Any]],
+              let indicators = results.first?["indicators"] as? [String: Any],
+              let quote = (indicators["quote"] as? [[String: Any]])?.first else {
+            throw URLError(.cannotParseResponse)
+        }
+        func values(_ key: String) -> [Double] {
+            ((quote[key] as? [Any]) ?? []).compactMap { ($0 as? NSNumber)?.doubleValue }.filter { $0.isFinite && $0 > 0 }
+        }
+        let closes = values("close")
+        guard let high = (values("high") + closes).max(),
+              let low = (values("low") + closes).min() else {
+            throw URLError(.cannotParseResponse)
+        }
+        return (high, low)
     }
 
     private func parse(data: Data, symbol: String, range: StockChartRange) throws -> StockPriceHistory {

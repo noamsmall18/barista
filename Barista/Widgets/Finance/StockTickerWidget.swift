@@ -35,6 +35,7 @@ struct MarketQuote: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case symbol, price, change, kind, previousClose, currency, receivedAt, source, dayHigh, dayLow, volume
         case sparkline, sparklineTimes, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow
+        case allTimeHigh, allTimeLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
         case regularStart, regularEnd
@@ -42,6 +43,10 @@ struct MarketQuote: Codable, Equatable {
     var marketCap: Double?
     var fiftyTwoWeekHigh: Double?
     var fiftyTwoWeekLow: Double?
+    /// Provider-reported all-time extremes. CoinGecko supplies these for
+    /// crypto; stock extremes are loaded from full price history on demand.
+    var allTimeHigh: Double?
+    var allTimeLow: Double?
     var openPrice: Double?
     var peRatio: Double?
 
@@ -1950,6 +1955,8 @@ class StockTickerWidget: BaristaWidget {
                 results[results.count - 1].currency = currency.uppercased()
                 results[results.count - 1].receivedAt = Date().timeIntervalSince1970
                 results[results.count - 1].source = "CoinGecko"
+                results[results.count - 1].allTimeHigh = cd["ath"] as? Double
+                results[results.count - 1].allTimeLow = cd["atl"] as? Double
             }
             DispatchQueue.main.async {
                 guard self.isRunning, self.lifecycleGeneration == generation,

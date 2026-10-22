@@ -28,6 +28,40 @@ struct TickerChartSummary {
     }
 }
 
+/// Distance from the all-time high and low. Provider extremes can lag the
+/// live quote, so today's range and the current price widen them when needed.
+struct AllTimeRangeSummary {
+    let high: Double
+    let low: Double
+    let current: Double
+    /// Zero at a new high, negative below it.
+    var percentFromHigh: Double { (current - high) / high * 100 }
+    /// Zero at a new low, positive above it.
+    var percentFromLow: Double { (current - low) / low * 100 }
+
+    init?(quote: MarketQuote, historicalHigh: Double?, historicalLow: Double?) {
+        let current = quote.currentPrice
+        guard current.isFinite, current > 0,
+              let historicalHigh, let historicalLow,
+              historicalHigh.isFinite, historicalLow.isFinite, historicalLow > 0 else { return nil }
+        let recentHighs = [quote.dayHigh, quote.fiftyTwoWeekHigh].compactMap { $0 }.filter { $0.isFinite && $0 > 0 }
+        let recentLows = [quote.dayLow, quote.fiftyTwoWeekLow].compactMap { $0 }.filter { $0.isFinite && $0 > 0 }
+        high = ([historicalHigh, current] + recentHighs).max() ?? historicalHigh
+        low = ([historicalLow, current] + recentLows).min() ?? historicalLow
+        self.current = current
+    }
+
+    static func formatPercent(_ value: Double) -> String {
+        let sign = value > 0 ? "+" : (value < 0 ? "-" : "")
+        let magnitude = abs(value)
+        if magnitude < 100 { return sign + String(format: "%.1f%%", magnitude) }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        return sign + (formatter.string(from: NSNumber(value: magnitude.rounded())) ?? String(format: "%.0f", magnitude)) + "%"
+    }
+}
+
 private struct ResearchMetric {
     let id: String
     let label: String
@@ -58,6 +92,8 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     private var fundamentalsError: String?
     private var newsLoaded = false
     private var historyByRange: [StockChartRange: StockPriceHistory] = [:]
+    private var stockAllTimeRange: (high: Double, low: Double)?
+    private var allTimeRangeFailed = false
 
     static func preferredSize(on screen: NSScreen?) -> NSSize {
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -98,6 +134,29 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
     override func loadView() {
         view = buildView()
         fetchPriceHistory(range: chartRange)
+        fetchAllTimeRange()
+    }
+
+    private var allTimeSummary: AllTimeRangeSummary? {
+        let extremes = quote.kind == .stock
+            ? stockAllTimeRange
+            : quote.allTimeHigh.flatMap { high in quote.allTimeLow.map { (high, $0) } }
+        return AllTimeRangeSummary(quote: quote, historicalHigh: extremes?.high, historicalLow: extremes?.low)
+    }
+
+    private func fetchAllTimeRange() {
+        guard fetchesRemoteData, quote.kind == .stock else { return }
+        StockPriceHistoryService.shared.fetchAllTimeRange(symbol: quote.symbol) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let range):
+                self.stockAllTimeRange = range
+                self.allTimeRangeFailed = false
+            case .failure:
+                self.allTimeRangeFailed = self.stockAllTimeRange == nil
+            }
+            self.renderOverview()
+        }
     }
 
     override func viewDidAppear() {
@@ -146,11 +205,23 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         if let headerHost { _ = addHeader(to: headerHost, y: 0, pad: 16, cw: view.bounds.width - 32) }
         terminalChartView?.update(quote: quote)
         renderChartStats()
-        if let overviewHost {
-            overviewHost.subviews.forEach { $0.removeFromSuperview() }
-            _ = addSnapshot(to: overviewHost, y: 0, pad: 0, cw: overviewHost.bounds.width)
-        }
+        renderOverview()
         updatePositionLabel()
+    }
+
+    private func renderOverview() {
+        guard let overviewHost else { return }
+        // The cards below are laid out from the snapshot's height, so a quote
+        // that gains or loses a range row needs the whole tab reflowed.
+        guard overviewHost.frame.height == snapshotHeight() else {
+            let offset = bodyScroll?.contentView.bounds.origin ?? .zero
+            buildBody()
+            bodyScroll?.contentView.scroll(to: offset)
+            bodyScroll.map { $0.reflectScrolledClipView($0.contentView) }
+            return
+        }
+        overviewHost.subviews.forEach { $0.removeFromSuperview() }
+        _ = addSnapshot(to: overviewHost, y: 0, pad: 0, cw: overviewHost.bounds.width)
     }
 
     private func startLiveRefreshTimer() {
@@ -237,11 +308,12 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         default:
             y = addChart(to: doc, y: y, pad: pad, cw: cw)
             if let history = historyByRange[chartRange] { terminalChartView?.update(history: history) }
-            let overview = FlippedView(frame: NSRect(x: pad, y: y + 12, width: cw, height: 190))
+            let snapshotH = snapshotHeight()
+            let overview = FlippedView(frame: NSRect(x: pad, y: y + 12, width: cw, height: snapshotH))
             doc.addSubview(overview)
             overviewHost = overview
             _ = addSnapshot(to: overview, y: 0, pad: 0, cw: cw)
-            y += 214
+            y += snapshotH + 24
             let holding = makeCard(x: pad, y: y, w: cw, h: 70, radius: 10)
             doc.addSubview(holding)
             let title = sectionLabel("YOUR POSITION")
@@ -557,12 +629,30 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         ])
     }
 
+    private var hasDayRangeRow: Bool {
+        if let low = quote.dayLow, let high = quote.dayHigh { return high > low }
+        return false
+    }
+
+    private var hasYearRangeRow: Bool {
+        if let low = quote.fiftyTwoWeekLow, let high = quote.fiftyTwoWeekHigh { return high > low }
+        return false
+    }
+
+    /// The all-time row holds its place while stock history loads so the tab
+    /// does not jump when it arrives.
+    private var hasAllTimeRow: Bool {
+        allTimeSummary != nil || (quote.kind == .stock && fetchesRemoteData)
+    }
+
+    private func snapshotHeight() -> CGFloat {
+        let barCount = [hasDayRangeRow, hasYearRangeRow, hasAllTimeRow].filter { $0 }.count
+        return 118 + CGFloat(barCount) * 36
+    }
+
     private func addSnapshot(to doc: NSView, y: CGFloat, pad: CGFloat, cw: CGFloat) -> CGFloat {
         guard let w = widget else { return y }
-        let hasDayRange = quote.dayLow != nil && quote.dayHigh != nil
-        let hasYearRange = quote.fiftyTwoWeekLow != nil && quote.fiftyTwoWeekHigh != nil
-        let barCount = [hasDayRange, hasYearRange].filter { $0 }.count
-        let h: CGFloat = barCount == 0 ? 118 : (barCount == 1 ? 154 : 190)
+        let h = snapshotHeight()
         let card = makeCard(x: pad, y: y, w: cw, h: h, radius: 10)
         doc.addSubview(card)
 
@@ -624,6 +714,29 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
                         high: high,
                         current: quote.currentPrice,
                         tint: Theme.brandCyan)
+            barY += 36
+        }
+
+        if let summary = allTimeSummary {
+            let trailing = "\(AllTimeRangeSummary.formatPercent(summary.percentFromHigh)) off high · \(AllTimeRangeSummary.formatPercent(summary.percentFromLow)) off low"
+            addRangeRow(to: card,
+                        y: barY,
+                        w: cw,
+                        title: "All-time range",
+                        low: summary.low,
+                        high: summary.high,
+                        current: summary.current,
+                        tint: Theme.purple,
+                        trailing: trailing)
+        } else if hasAllTimeRow {
+            let title = NSTextField(labelWithString: "ALL-TIME RANGE")
+            title.font = NSFont.systemFont(ofSize: 8, weight: .bold)
+            title.textColor = Theme.textGhost
+            title.frame = NSRect(x: 14, y: barY, width: 110, height: 10)
+            card.addSubview(title)
+            let status = smallMono(allTimeRangeFailed ? "Unavailable" : "Loading…", color: Theme.textFaint, align: .right)
+            status.frame = NSRect(x: cw - 214, y: barY, width: 200, height: 10)
+            card.addSubview(status)
         }
 
         return y + h
@@ -877,7 +990,8 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         return y + h
     }
 
-    private func addRangeRow(to card: NSView, y: CGFloat, w: CGFloat, title: String, low: Double, high: Double, current: Double, tint: NSColor) {
+    private func addRangeRow(to card: NSView, y: CGFloat, w: CGFloat, title: String, low: Double, high: Double, current: Double, tint: NSColor,
+                             trailing: String? = nil) {
         guard let widget = widget else { return }
         let titleLabel = NSTextField(labelWithString: title.uppercased())
         titleLabel.font = NSFont.systemFont(ofSize: 8, weight: .bold)
@@ -901,8 +1015,12 @@ class StockDetailPopoverController: NSViewController, XMLParserDelegate {
         card.addSubview(track)
 
         let pos = rangePosition(value: current, low: low, high: high) ?? 0
-        let currentLabel = smallMono(String(format: "%.0f%%", pos * 100), color: tint, align: .right)
-        currentLabel.frame = NSRect(x: w - 62, y: y, width: 48, height: 10)
+        let currentLabel = smallMono(trailing ?? String(format: "%.0f%%", pos * 100), color: tint, align: .right)
+        currentLabel.frame = trailing == nil
+            ? NSRect(x: w - 62, y: y, width: 48, height: 10)
+            : NSRect(x: 130, y: y, width: w - 144, height: 10)
+        currentLabel.lineBreakMode = .byTruncatingHead
+        if trailing != nil { currentLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .semibold) }
         card.addSubview(currentLabel)
     }
 
