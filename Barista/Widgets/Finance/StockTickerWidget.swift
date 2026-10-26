@@ -92,8 +92,11 @@ struct MarketQuote: Codable, Equatable {
         extendedHours(at: now)?.price ?? price
     }
 
-    var currentChange: Double {
-        if let ext = extendedHours,
+    var currentChange: Double { currentChange(at: Date()) }
+
+    func currentChange(at now: Date) -> Double {
+        if startsNewDay(at: now) { return (currentPrice(at: now) - price) / price * 100 }
+        if let ext = extendedHours(at: now),
            let previousClose,
            previousClose > 0 {
             return (ext.price - previousClose) / previousClose * 100
@@ -114,7 +117,7 @@ struct MarketQuote: Codable, Equatable {
     var chartBaseline: Double? {
         switch kind {
         case .stock:
-            return previousClose ?? baselinePrice ?? sparkline.first
+            return baselinePrice ?? sparkline.first
         case .crypto:
             return sparkline.first ?? baselinePrice
         }
@@ -193,23 +196,38 @@ struct MarketQuote: Codable, Equatable {
         }
     }
 
-    var baselinePrice: Double? {
+    var baselinePrice: Double? { baselinePrice(at: Date()) }
+
+    /// The close the day's gain is measured from.
+    func baselinePrice(at now: Date) -> Double? {
+        if startsNewDay(at: now) { return price }
         if let previousClose, previousClose > 0 { return previousClose }
         let denominator = 1 + (change / 100.0)
         guard denominator > 0 else { return nil }
         return price / denominator
     }
 
-    func dailyValueChange(for quantity: Double) -> Double {
+    /// True once midnight ET has passed since this quote's regular session.
+    /// The new day then starts from that session's close; Yahoo's previous
+    /// close still points a session further back until the next chart loads,
+    /// which would carry the old day's whole move into overnight and early
+    /// pre-market.
+    private func startsNewDay(at now: Date) -> Bool {
+        guard kind == .stock, regularEnd > 0, price > 0 else { return false }
+        let cal = PortfolioTradingCalendar.calendar
+        return cal.startOfDay(for: now) > cal.startOfDay(for: Date(timeIntervalSince1970: regularEnd))
+    }
+
+    func dailyValueChange(for quantity: Double, at now: Date = Date()) -> Double {
         guard quantity > 0 else { return 0 }
-        guard let baselinePrice else { return 0 }
+        guard let baselinePrice = baselinePrice(at: now) else { return 0 }
         return (price - baselinePrice) * quantity
     }
 
-    func currentValueChange(for quantity: Double) -> Double {
+    func currentValueChange(for quantity: Double, at now: Date = Date()) -> Double {
         guard quantity > 0 else { return 0 }
-        guard let baselinePrice else { return 0 }
-        return (currentPrice - baselinePrice) * quantity
+        guard let baselinePrice = baselinePrice(at: now) else { return 0 }
+        return (currentPrice(at: now) - baselinePrice) * quantity
     }
 
     var extendedHours: (price: Double, change: Double, label: String)? { extendedHours(at: Date()) }
