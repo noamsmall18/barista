@@ -38,6 +38,7 @@ struct MarketQuote: Codable, Equatable {
         case allTimeHigh, allTimeLow
         case openPrice, peRatio
         case preMarketPrice, preMarketChange, postMarketPrice, postMarketChange, marketState
+        case overnightPrice, overnightTradeTime
         case regularStart, regularEnd
     }
     var marketCap: Double?
@@ -56,6 +57,12 @@ struct MarketQuote: Codable, Equatable {
     var postMarketPrice: Double?
     var postMarketChange: Double?
     var marketState: String?
+
+    /// Latest overnight-session trade, from `OvernightQuoteFeed`. Only shown
+    /// while that session is open and only if it printed tonight.
+    var overnightPrice: Double? = nil
+    /// Unix seconds of that trade at the venue.
+    var overnightTradeTime: Double? = nil
 
     /// Regular-session window for this quote's day, as Unix seconds. Carried on
     /// the quote so the intraday bars can be split by session anywhere they are
@@ -79,8 +86,10 @@ struct MarketQuote: Codable, Equatable {
 
     var isUp: Bool { change >= 0 }
 
-    var currentPrice: Double {
-        extendedHours?.price ?? price
+    var currentPrice: Double { currentPrice(at: Date()) }
+
+    func currentPrice(at now: Date) -> Double {
+        extendedHours(at: now)?.price ?? price
     }
 
     var currentChange: Double {
@@ -203,8 +212,21 @@ struct MarketQuote: Codable, Equatable {
         return (currentPrice - baselinePrice) * quantity
     }
 
-    var extendedHours: (price: Double, change: Double, label: String)? {
-        switch marketStatus {
+    var extendedHours: (price: Double, change: Double, label: String)? { extendedHours(at: Date()) }
+
+    func extendedHours(at now: Date) -> (price: Double, change: Double, label: String)? {
+        if kind == .stock, let start = OvernightQuoteFeed.sessionStart(containing: now) {
+            // A print from an earlier night must not stand in for tonight's.
+            if let p = overnightPrice, let time = overnightTradeTime,
+               time >= start.timeIntervalSince1970, price > 0 {
+                return (p, (p - price) / price * 100, "ON")
+            }
+            // Until tonight's first trade, the after-hours close is still the
+            // latest price; dropping to the 4 PM close at 8 PM would be wrong.
+            if let p = postMarketPrice, let c = postMarketChange { return (p, c, "AH") }
+            return nil
+        }
+        switch MarketStatus.fromYahooMarketState(marketState) ?? MarketStatus.current(at: now) {
         case .preMarket:
             if let p = preMarketPrice, let c = preMarketChange { return (p, c, "Pre") }
         case .afterHours:
@@ -215,6 +237,16 @@ struct MarketQuote: Codable, Equatable {
             return nil
         }
         return nil
+    }
+
+    /// Yahoo's chart has no overnight trades, so a Yahoo refresh carries over
+    /// the one `OvernightQuoteFeed` last delivered.
+    func keepingOvernightTrade(from old: MarketQuote?) -> MarketQuote {
+        guard let old, old.overnightPrice != nil else { return self }
+        var quote = self
+        quote.overnightPrice = old.overnightPrice
+        quote.overnightTradeTime = old.overnightTradeTime
+        return quote
     }
 }
 
@@ -313,18 +345,23 @@ struct PortfolioSnapshot {
         return extendedPL / total * 100
     }
 
-    /// "Pre-market" or "After hours", taken from whichever phase the held
-    /// positions are actually reporting.
+    /// "Pre-market", "After hours" or "Overnight", taken from whichever phase
+    /// the held positions are actually reporting.
     var extendedLabel: String? {
         for p in positions {
-            guard p.extendedPL != nil else { continue }
-            switch p.quote.marketStatus {
-            case .preMarket:  return "Pre-market"
-            case .afterHours: return "After hours"
-            default:          continue
-            }
+            guard p.extendedPL != nil, let name = Self.sessionName(for: p.quote.extendedHours?.label) else { continue }
+            return name
         }
         return nil
+    }
+
+    static func sessionName(for label: String?) -> String? {
+        switch label {
+        case "Pre": return "Pre-market"
+        case "AH":  return "After hours"
+        case "ON":  return "Overnight"
+        default:    return nil
+        }
     }
 
     var winners: Int { positions.filter { $0.dailyPL > 0.005 }.count }
@@ -798,6 +835,8 @@ class StockTickerWidget: BaristaWidget {
     private var inFlightStocks: Set<String> = []
     private var inFlightIndexes: Set<String> = []
     private var inFlightCrypto = false
+    private var inFlightOvernight = false
+    private var overnightRetryAfter: Date?
     private var cryptoStream: KrakenTickerStream?
     private var isRunning = false
     private var lifecycleGeneration = 0
@@ -854,8 +893,18 @@ class StockTickerWidget: BaristaWidget {
     /// How often equities are worth re-fetching. Prices only move while the
     /// exchange is open, so polling every few seconds overnight buys nothing and
     /// is what gets the app throttled.
-    private var stockRefreshInterval: TimeInterval {
-        stockInterval(during: MarketStatus.current())
+    private var stockRefreshInterval: TimeInterval { stockInterval(at: Date()) }
+
+    /// Overnight trades print all session long, so the menu bar polls them at
+    /// the after-hours pace rather than the closed-market one.
+    func stockInterval(at now: Date) -> TimeInterval {
+        OvernightQuoteFeed.isActive(at: now)
+            ? stockInterval(during: .afterHours) : stockInterval(during: MarketStatus.current(at: now))
+    }
+
+    /// Yahoo has nothing new overnight, so its chart keeps the closed pace then.
+    func yahooStockInterval(at now: Date) -> TimeInterval {
+        stockInterval(during: OvernightQuoteFeed.isActive(at: now) ? .closed : MarketStatus.current(at: now))
     }
 
     /// Takes the phase as an argument so the schedule can be checked for hours
@@ -1077,6 +1126,9 @@ class StockTickerWidget: BaristaWidget {
                 && PortfolioTradingCalendar.isOvernightSession(now)
             func overnightPrice(_ quote: MarketQuote) -> Double? {
                 guard overnight, quote.kind == .stock else { return nil }
+                if let ext = quote.extendedHours(at: now), ext.label == "ON",
+                   let time = quote.overnightTradeTime,
+                   now.timeIntervalSince1970 - time <= 120 { return ext.price }
                 let times = quote.minuteTimes.isEmpty ? quote.sparklineTimes : quote.minuteTimes
                 let values = quote.minuteTimes.isEmpty ? quote.sparkline : quote.minuteCloses
                 guard times.count == values.count, let time = times.last, let value = values.last,
@@ -1097,7 +1149,9 @@ class StockTickerWidget: BaristaWidget {
                 // the real overnight bar, or the last extended-hours close for
                 // a held stock that hasn't printed in the overnight session.
                 let post = quote.postMarketPrice.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-                let price = overnightPrice(quote) ?? (overnight && quote.kind == .stock ? post : nil) ?? quote.currentPrice
+                let price = overnightPrice(quote)
+                    ?? (overnight && quote.kind == .stock ? quote.extendedHours(at: now)?.price ?? post : nil)
+                    ?? quote.currentPrice
                 if price.isFinite && price > 0 { prices[quote.symbol] = price }
             }
             let value = snapshot.positions.reduce(snapshot.cash) { $0 + $1.quantity * (prices[$1.quote.symbol] ?? $1.quote.currentPrice) }
@@ -1251,6 +1305,7 @@ class StockTickerWidget: BaristaWidget {
         inFlightStocks.removeAll()
         inFlightIndexes.removeAll()
         inFlightCrypto = false
+        inFlightOvernight = false
         lastStreamUpdateByCoin.removeAll()
         if let cacheWrite {
             cacheWrite.cancel()
@@ -1611,6 +1666,7 @@ class StockTickerWidget: BaristaWidget {
     // MARK: - Fetching
 
     private var lastStockFetch: Date?
+    private var lastYahooStockFetch: Date?
     private var lastCryptoFetch: Date?
 
     private func fetchAll(force: Bool = false) {
@@ -1632,8 +1688,13 @@ class StockTickerWidget: BaristaWidget {
 
         if stocksDue {
             lastStockFetch = now
-            for s in config.symbols { fetchStock(symbol: s, force: force) }
-            for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
+            let yahooDue = force || lastYahooStockFetch.map { now.timeIntervalSince($0) >= yahooStockInterval(at: now) } ?? true
+            if yahooDue {
+                lastYahooStockFetch = now
+                for s in config.symbols { fetchStock(symbol: s, force: force) }
+                for idx in Self.indexSymbols where !config.symbols.contains(idx) { fetchIndex(symbol: idx, force: force) }
+            }
+            if OvernightQuoteFeed.isActive(at: now) { fetchOvernight(force: force) }
         }
         if cryptoDue, !restCryptoIDs.isEmpty {
             lastCryptoFetch = now
@@ -1685,6 +1746,41 @@ class StockTickerWidget: BaristaWidget {
             case .failure(let error):
                 DispatchQueue.main.async { self.inFlightIndexes.remove(symbol); self.noteFetchFailure(error) }
             }
+        }
+    }
+
+    /// One request for every watched stock and index. Failures don't feed the
+    /// Yahoo backoff, since a throttled Robinhood says nothing about Yahoo.
+    private func fetchOvernight(force: Bool = false) {
+        guard isRunning, !inFlightOvernight else { return }
+        if !force, let retry = overnightRetryAfter, retry > Date() { return }
+        let symbols = (config.symbols + Self.indexSymbols.filter { !config.symbols.contains($0) })
+        guard let url = OvernightQuoteFeed.url(for: symbols) else { return }
+        let requestGeneration = lifecycleGeneration
+        inFlightOvernight = true
+        DataFetcher.shared.fetch(url: url, maxAge: force ? 0 : quoteCacheAge, allowStaleCache: false) { [weak self] result in
+            guard let self, self.lifecycleGeneration == requestGeneration else { return }
+            self.inFlightOvernight = false
+            guard self.isRunning else { return }
+            let trades = (try? result.get()).map(OvernightQuoteFeed.parse) ?? []
+            guard !trades.isEmpty else {
+                // Undocumented endpoint: Yahoo's last price stays up meanwhile.
+                self.overnightRetryAfter = Date().addingTimeInterval(60)
+                return
+            }
+            self.overnightRetryAfter = nil
+            let received = Date().timeIntervalSince1970
+            self.quotes = OvernightQuoteFeed.merge(trades, into: self.quotes, receivedAt: received)
+            self.indexQuotes = OvernightQuoteFeed.merge(trades, into: self.indexQuotes, receivedAt: received)
+            for quote in self.quotes where quote.kind == .stock && quote.receivedAt == received {
+                self.checkPriceAlert(symbol: quote.symbol, newPrice: quote.currentPrice)
+                self.previousPrices[quote.symbol] = quote.currentPrice
+            }
+            self.lastUpdated = Date()
+            self.noteFetchSuccess()
+            self.saveQuoteCache()
+            self.onDisplayUpdate?()
+            self.notifyDataRefresh()
         }
     }
 
@@ -1864,6 +1960,8 @@ class StockTickerWidget: BaristaWidget {
             DispatchQueue.main.async {
                 guard self.isRunning, self.lifecycleGeneration == generation else { return }
                 guard isIndex || self.config.symbols.contains(symbol) else { return }
+                let q = q.keepingOvernightTrade(from: (self.quotes + self.indexQuotes)
+                    .first { $0.symbol == symbol && $0.kind == .stock })
                 self.failedSymbols.remove(symbol)
                 self.lastFetchFailed = false
                 self.isUsingCachedData = false

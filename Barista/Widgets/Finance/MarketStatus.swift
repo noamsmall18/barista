@@ -20,11 +20,10 @@ enum MarketStatus {
     }
 
 
-    static func current() -> MarketStatus {
+    static func current(at now: Date = Date()) -> MarketStatus {
         let et = TimeZone(identifier: "America/New_York")!
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = et
-        let now = Date()
         let wd = cal.component(.weekday, from: now)
         if wd == 1 || wd == 7 { return .closed }
         let t = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
