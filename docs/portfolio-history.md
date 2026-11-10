@@ -76,7 +76,7 @@ coordinates as the drawn portfolio path. Actual timestamps remain available.
 
 ## Verification
 
-Run Swift checks with `BARISTA_TEST_MODE=1` and the installed Xcode toolchain;
+Run `./test.sh` ([testing](testing.md));
 all history fixtures use in-memory preferences and disposable holdings. Tests
 cover weekends, holidays, early closes, DST, crypto, overnight samples, frequent
 refreshes, daily and cross-session isolated dips/spikes, repeated bad readings,

@@ -1,5 +1,35 @@
 import Cocoa
 
+/// Shares and cash stay untouched when reconciling a broker's reported P/L.
+enum RealizedYearToDateForm {
+    @discardableResult
+    static func present(widget: StockTickerWidget) -> Bool {
+        guard !widget.config.isCombinedPortfolioActive else { return false }
+        let date = Date()
+        let year = Portfolio.reportingCalendar.component(.year, from: date)
+        let alert = NSAlert()
+        alert.messageText = "Reconcile realized YTD · \(year)"
+        alert.informativeText = "Enter \(widget.activePortfolioName)'s broker-reported realized profit or loss for this year through now. Use a negative number for a loss.\n\nThis preserves your trade history, positions and cash. Future recorded sales add to this amount; it does not carry into next year's YTD total."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = String(format: "%.2f", widget.config.realizedYearToDate(asOf: date))
+        field.setAccessibilityLabel("Realized YTD profit or loss")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        let raw = field.stringValue.replacingOccurrences(of: ",", with: "")
+            .replacingOccurrences(of: "$", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let amount = Double(raw), amount.isFinite else {
+            let error = NSAlert()
+            error.messageText = "Enter a valid profit or loss amount."
+            error.runModal()
+            return false
+        }
+        return widget.reconcileRealizedYearToDate(amount, asOf: date)
+    }
+}
+
 // MARK: - Holdings Form
 
 /// The shares + average cost accessory shown by the holdings dialog.

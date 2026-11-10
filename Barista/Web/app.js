@@ -141,7 +141,7 @@ function render() {
   $('summary').innerHTML = metric('Live portfolio value',money(s.liveTotal),s.currencyComparable ? `Cash ${money(s.cash)} · Includes available extended hours` : 'Mixed quote currencies · total withheld') +
     metric('Regular-session move',signed(s.dayPL),pct(s.dayPercent),tone(s.dayPL)) +
     metric('Unrealized gain / loss',signed(s.unrealizedPL),`${pct(s.unrealizedPercent)} · ${s.missingCostCount ? `${s.missingCostCount} positions without cost basis` : 'On positions with cost basis'}`,tone(s.unrealizedPL)) +
-    metric(valid(s.extendedPL)?s.extendedLabel:'Realized gain / loss',signed(s.currencyComparable?(valid(s.extendedPL)?s.extendedPL:s.realizedPL):null),valid(s.extendedPL)?'Since regular close · separate from session P/L':'From recorded sales in your ledger',tone(valid(s.extendedPL)?s.extendedPL:s.realizedPL));
+    metric(valid(s.extendedPL)?s.extendedLabel:'Realized YTD',signed(s.currencyComparable?(valid(s.extendedPL)?s.extendedPL:s.realizedPL):null),valid(s.extendedPL)?'Since regular close · separate from session P/L':'Current year; includes any broker reconciliation',tone(valid(s.extendedPL)?s.extendedPL:s.realizedPL));
   $('indices').innerHTML = state.indices.map(q => `<div class="index-tile"><b>${esc(q.symbol)}</b><span class="index-price">${money(q.price,q.currency)}</span><span class="${tone(q.change)}">${pct(q.change)}</span><span class="mini-chart">${graph((q.sparkline||[]).map((v,i)=>[i,v]),[],true)}</span></div>`).join('');
   renderBriefing(); renderExposure(); renderHoldings(); renderPortfolioChart(); renderEarnings(); renderTrades();
   const available = new Set(researchQuotes().map(q=>q.symbol));
@@ -234,7 +234,7 @@ function renderEarnings() {
 function renderTrades() {
   const trades=state.trades;
   const buys=trades.filter(t=>t.side==='Buy'), sells=trades.filter(t=>t.side==='Sell');
-  $('activity-summary').innerHTML=stat('Recorded trades',num(trades.length),'Latest 100 ledger entries')+stat('Buys / sells',`${buys.length} / ${sells.length}`)+stat('Realized gain / loss',money(state.summary.currencyComparable?state.summary.realizedPL:null),'From recorded sales; basis-dependent');
+  $('activity-summary').innerHTML=stat('Recorded trades',num(trades.length),'Latest 100 ledger entries')+stat('Buys / sells',`${buys.length} / ${sells.length}`)+stat('Realized YTD',money(state.summary.currencyComparable?state.summary.realizedPL:null),'Current year; includes any broker reconciliation');
   $('trades').innerHTML=trades.length?`<table><thead><tr><th>Date</th><th>Security</th><th>Action</th><th>Quantity</th><th>Price</th><th>Notional</th><th>Note</th></tr></thead><tbody>${trades.map(t=>`<tr><td>${esc(stamp(t.date))}</td><td><button data-open-symbol="${esc(t.symbol)}" class="symbol">${esc(t.symbol)}</button></td><td class="${t.side==='Buy'?'up':t.side==='Sell'?'down':''}">${esc(t.side)}</td><td>${num(t.quantity)}</td><td>${money(t.price,quoteFor(t.symbol)?.currency)}</td><td>${money(t.quantity*t.price,quoteFor(t.symbol)?.currency)}</td><td>${esc(t.note||'—')}</td></tr>`).join('')}</tbody></table>`:empty('No trades recorded in this portfolio. Log buys and sells in the menu bar app.');
 }
 const quoteFor = symbol => state?.quotes.find(q=>q.symbol===symbol)||studyQuotes.get(symbol);

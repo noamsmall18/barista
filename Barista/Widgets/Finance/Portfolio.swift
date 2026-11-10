@@ -25,6 +25,14 @@ struct Portfolio: Codable, Equatable {
     /// Profit banked by selling, as opposed to gains still on paper.
     var realized: [String: Double] = [:]
 
+    /// A broker-reported YTD total through a specific instant, without invented
+    /// trades or changes to cash. Subsequent sales continue from this total.
+    struct RealizedCheckpoint: Codable, Equatable {
+        var date: Date
+        var amount: Double
+    }
+    var realizedCheckpoint: RealizedCheckpoint?
+
     /// Set when the ledger was seeded from pre-ledger holdings during decode.
     /// Not persisted; it exists so the app knows to write the migrated form back
     /// once, instead of re-deriving it on every launch.
@@ -49,7 +57,7 @@ struct Portfolio: Codable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, holdings, costBasis, cash, transactions
+        case id, name, holdings, costBasis, cash, transactions, realizedCheckpoint
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +68,7 @@ struct Portfolio: Codable, Equatable {
         costBasis = try c.decodeIfPresent([String: Double].self, forKey: .costBasis) ?? [:]
         cash = try c.decodeIfPresent(Double.self, forKey: .cash) ?? 0
         transactions = try c.decodeIfPresent([Transaction].self, forKey: .transactions) ?? []
+        realizedCheckpoint = try c.decodeIfPresent(RealizedCheckpoint.self, forKey: .realizedCheckpoint)
 
         // Portfolios saved before the ledger existed carry holdings but no
         // history. Seed opening entries from what they already had so the
@@ -163,6 +172,31 @@ struct Portfolio: Codable, Equatable {
     }
 
     var realizedTotal: Double { realized.values.reduce(0, +) }
+
+    static var reportingCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        return calendar
+    }
+
+    func realizedYearToDate(asOf date: Date = Date()) -> Double {
+        let start = Self.reportingCalendar.dateInterval(of: .year, for: date)!.start
+        let current = Ledger.derive(from: transactions.filter { $0.date <= date }).realizedTotal
+        if let checkpoint = realizedCheckpoint,
+           checkpoint.amount.isFinite, checkpoint.date >= start, checkpoint.date <= date {
+            let throughCheckpoint = Ledger.derive(from: transactions.filter { $0.date <= checkpoint.date }).realizedTotal
+            return checkpoint.amount + current - throughCheckpoint
+        }
+        let priorYears = Ledger.derive(from: transactions.filter { $0.date < start }).realizedTotal
+        return current - priorYears
+    }
+
+    @discardableResult
+    mutating func reconcileRealizedYearToDate(_ amount: Double, asOf date: Date = Date()) -> Bool {
+        guard amount.isFinite, date.timeIntervalSinceReferenceDate.isFinite else { return false }
+        realizedCheckpoint = RealizedCheckpoint(date: date, amount: amount)
+        return true
+    }
 
     /// Trades only, newest first. Opening entries are history, not decisions.
     var tradeHistory: [Transaction] {

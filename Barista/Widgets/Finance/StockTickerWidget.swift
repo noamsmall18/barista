@@ -581,6 +581,13 @@ struct StockTickerConfig: Codable, Equatable {
     /// Realised profit for the active portfolio.
     var realizedTotal: Double { activePortfolio?.realizedTotal ?? 0 }
 
+    func realizedYearToDate(asOf date: Date = Date()) -> Double {
+        if isCombinedPortfolioActive {
+            return portfolios.reduce(0) { $0 + $1.realizedYearToDate(asOf: date) }
+        }
+        return activePortfolio?.realizedYearToDate(asOf: date) ?? 0
+    }
+
     var tradeHistory: [Transaction] { activePortfolio?.tradeHistory ?? [] }
 
     // Display
@@ -628,6 +635,9 @@ struct StockTickerConfig: Codable, Equatable {
     var historyCollapsed: Bool = false
     var allocationCollapsed: Bool = false
 
+    /// Annual risk-free rate, in percent, used for the Sharpe ratio.
+    var riskFreeRatePercent: Double = PortfolioRiskMetrics.defaultRiskFreePercent
+
     static let `default` = StockTickerConfig(
         symbols: ["AAPL", "MSFT", "SPY"],
         coins: ["bitcoin", "ethereum"],
@@ -660,7 +670,7 @@ struct StockTickerConfig: Codable, Equatable {
         case displayMode, focusCycleSeconds, sortMode, priceAlerts
         case colorMode, accentColor, showMarketCap, showDayRange, showPERatio
         case historyRange, compareToBenchmark, historyShowsRaw
-        case historyCollapsed, allocationCollapsed
+        case historyCollapsed, allocationCollapsed, riskFreeRatePercent
     }
 
     init(symbols: [String] = ["AAPL", "MSFT", "SPY"], coins: [String] = ["bitcoin", "ethereum"],
@@ -738,6 +748,9 @@ struct StockTickerConfig: Codable, Equatable {
         compareToBenchmark = try c.decodeIfPresent(Bool.self, forKey: .compareToBenchmark) ?? false
         historyCollapsed = try c.decodeIfPresent(Bool.self, forKey: .historyCollapsed) ?? false
         allocationCollapsed = try c.decodeIfPresent(Bool.self, forKey: .allocationCollapsed) ?? false
+        let rate = try c.decodeIfPresent(Double.self, forKey: .riskFreeRatePercent)
+        riskFreeRatePercent = rate.flatMap { $0.isFinite && (0...25).contains($0) ? $0 : nil }
+            ?? PortfolioRiskMetrics.defaultRiskFreePercent
     }
 
     func encode(to encoder: Encoder) throws {
@@ -778,6 +791,7 @@ struct StockTickerConfig: Codable, Equatable {
         try c.encode(compareToBenchmark, forKey: .compareToBenchmark)
         try c.encode(historyCollapsed, forKey: .historyCollapsed)
         try c.encode(allocationCollapsed, forKey: .allocationCollapsed)
+        try c.encode(riskFreeRatePercent, forKey: .riskFreeRatePercent)
     }
 }
 
@@ -1189,11 +1203,79 @@ class StockTickerWidget: BaristaWidget {
     }
 
     /// Shared presentation for the dropdown, native terminal and research service.
-    var portfolioTradesContinuously: Bool {
-        config.holdings.contains { symbol, quantity in
+    var portfolioTradesContinuously: Bool { tradesContinuously(config.holdings) }
+
+    private func tradesContinuously(_ holdings: [String: Double]) -> Bool {
+        holdings.contains { symbol, quantity in
             quantity > 0 && (portfolioQuote(for: symbol)?.kind == .crypto
                 || config.coins.contains { (coinSymbols[$0] ?? String($0.prefix(4)).uppercased()) == symbol })
         }
+    }
+
+    // MARK: - Risk-adjusted return
+
+    /// Sharpe ratio for every portfolio, in the order the tabs show them. Each
+    /// uses its own complete flow-adjusted history, never Raw and never just
+    /// the range currently charted.
+    func portfolioRiskRows() -> [PortfolioRiskRow] {
+        var rows: [PortfolioRiskRow] = []
+        if config.combinedPortfolioEnabled {
+            let combined = Portfolio.combined(config.portfolios)
+            rows.append(PortfolioRiskRow(id: Portfolio.combinedID, name: Portfolio.combinedName,
+                                         isActive: config.isCombinedPortfolioActive,
+                                         metrics: riskMetrics(historyID: config.combinedPortfolioHistoryID,
+                                                              holdings: combined.holdings)))
+        }
+        for portfolio in config.portfolios {
+            rows.append(PortfolioRiskRow(id: portfolio.id, name: portfolio.name,
+                                         isActive: !config.isCombinedPortfolioActive && portfolio.id == config.activePortfolioID,
+                                         metrics: riskMetrics(historyID: portfolio.id, holdings: portfolio.holdings)))
+        }
+        return rows
+    }
+
+    /// The portfolio currently on screen.
+    func activePortfolioRiskMetrics() -> PortfolioRiskMetrics {
+        guard let active = config.activePortfolio else { return .empty }
+        return riskMetrics(historyID: config.activePortfolioHistoryID, holdings: active.holdings)
+    }
+
+    @discardableResult
+    func setRiskFreeRate(percent: Double) -> Bool {
+        guard percent.isFinite, (0...25).contains(percent) else { return false }
+        guard percent != config.riskFreeRatePercent else { return true }
+        config.riskFreeRatePercent = percent
+        saveConfig()
+        notifyDataRefresh()
+        return true
+    }
+
+    private struct RiskCacheEntry {
+        let samples: Int
+        let continuous: Bool
+        let rate: Double
+        let computedAt: Date
+        let metrics: PortfolioRiskMetrics
+    }
+    private var riskCache: [String: RiskCacheEntry] = [:]
+
+    /// History gains at most one observation a minute, so quote refreshes that
+    /// arrive faster reuse the last result instead of rescanning the store.
+    private func riskMetrics(historyID: String, holdings: [String: Double]) -> PortfolioRiskMetrics {
+        let continuous = tradesContinuously(holdings)
+        let rate = config.riskFreeRatePercent
+        let samples = historyService.sampleCount(for: historyID)
+        let now = Date()
+        if let cached = riskCache[historyID], cached.samples == samples, cached.continuous == continuous,
+           cached.rate == rate, now.timeIntervalSince(cached.computedAt) < 60 {
+            return cached.metrics
+        }
+        let points = historyService.points(for: historyID, range: .all, raw: false, continuous: continuous)
+        let metrics = PortfolioRiskMetrics.compute(points: points.map { (time: $0.time, value: $0.value) },
+                                                   continuous: continuous, riskFreePercent: rate)
+        riskCache[historyID] = RiskCacheEntry(samples: samples, continuous: continuous, rate: rate,
+                                              computedAt: now, metrics: metrics)
+        return metrics
     }
 
     func portfolioHistoryPoints(range: PortfolioHistoryService.Range,
@@ -2423,6 +2505,18 @@ class StockTickerWidget: BaristaWidget {
         saveConfig()
         onDisplayUpdate?()
         notifyDataRefresh()
+    }
+
+    @discardableResult
+    func reconcileRealizedYearToDate(_ amount: Double, asOf date: Date = Date()) -> Bool {
+        guard !config.isCombinedPortfolioActive else { return false }
+        var accepted = false
+        config.mutateActivePortfolio { accepted = $0.reconcileRealizedYearToDate(amount, asOf: date) }
+        guard accepted else { return false }
+        saveConfig()
+        onDisplayUpdate?()
+        notifyDataRefresh()
+        return true
     }
 
     // MARK: - Intraday Portfolio Curve

@@ -289,7 +289,8 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         guard let pv else { return 10 + 28 + 34 }
         var h: CGFloat = 10 + 28 + 24 + 18       // pad + tabs + value row + positions row
         if pv.totalPL != nil { h += 16 }
-        if (widget?.config.realizedTotal ?? 0) != 0 { h += 14 }
+        if (widget?.config.realizedYearToDate() ?? 0) != 0 { h += 14 }
+        h += 14                                   // Sharpe ratio
         if pv.extendedPL != nil { h += 15 }
         if !portfolioInsight(pv).isEmpty { h += 13 }
         h += 12                                   // prev close basis
@@ -417,17 +418,17 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
 
         // Profit actually banked by selling. Hidden until there is some, so a
         // portfolio that has never sold anything is not cluttered with a zero.
-        let realized = w.config.realizedTotal
+        let realized = w.config.realizedYearToDate()
         if realized != 0 {
-            let label = NSTextField(labelWithString: "Realised")
+            let label = NSTextField(labelWithString: "Realized YTD")
+            label.toolTip = "This year's realized profit or loss, including any broker reconciliation."
             label.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
             label.textColor = Theme.textMuted
             label.frame = NSRect(x: 12, y: top, width: cw / 2, height: 13)
             panel.addSubview(label)
 
-            let trades = w.config.tradeHistory.count
-            let value = NSTextField(labelWithString:
-                "\(w.formatSignedCurrency(realized))  (\(trades) trade\(trades == 1 ? "" : "s"))")
+            let value = NSTextField(labelWithString: w.formatSignedCurrency(realized))
+            value.identifier = NSUserInterfaceItemIdentifier("portfolio.realizedYTD")
             value.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
             value.textColor = w.intensityColor(for: realized >= 0 ? 1 : -1)
             value.alignment = .right
@@ -436,6 +437,28 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
             panel.addSubview(value)
             top += 14
         }
+
+        // Risk-adjusted return for the portfolio on this tab. Always present,
+        // so the row explains what is missing rather than appearing later.
+        let risk = w.activePortfolioRiskMetrics()
+        let riskLabel = NSTextField(labelWithString: "Sharpe ratio")
+        riskLabel.toolTip = String(format: "Annualized from daily closes over all recorded history, in excess of a %.2f%% risk-free rate. Holding and cash changes are neutralized.", w.config.riskFreeRatePercent)
+        riskLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        riskLabel.textColor = Theme.textMuted
+        riskLabel.frame = NSRect(x: 12, y: top, width: cw / 2 - 52, height: 13)
+        panel.addSubview(riskLabel)
+
+        let riskValue = NSTextField(labelWithString: risk.sharpe == nil ? risk.coverageText
+                                    : "\(risk.sharpeText) · \(risk.coverageText)")
+        riskValue.identifier = NSUserInterfaceItemIdentifier("portfolio.sharpe")
+        riskValue.font = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        riskValue.textColor = risk.sharpe.map { $0 < 0 ? Theme.red : $0 >= 1 ? Theme.green : Theme.textPrimary } ?? Theme.textGhost
+        riskValue.alignment = .right
+        riskValue.lineBreakMode = .byTruncatingTail
+        riskValue.toolTip = riskLabel.toolTip
+        riskValue.frame = NSRect(x: cw / 2 - 40, y: top, width: cw / 2 + 36, height: 13)
+        panel.addSubview(riskValue)
+        top += 14
 
         let insightText = portfolioInsight(pv)
         if !insightText.isEmpty {
@@ -536,6 +559,7 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         let chart = PortfolioChartView(frame: NSRect(x: 10, y: cursor, width: cw - 12, height: 104))
         chart.accent = tint
         chart.axisStyle = range.isIntraday ? .time : .date
+        chart.compressesExtendedHours = range.isIntraday && !w.portfolioTradesContinuously
         let originals = Dictionary(uniqueKeysWithValues: w.portfolioHistoryPoints(range: range, raw: true).map { ($0.time, $0.value) })
         chart.samples = points.map { PortfolioChartView.Sample(date: $0.time, value: $0.value, observedValue: originals[$0.time]) }
         chart.toolTip = range.isIntraday
@@ -2025,6 +2049,10 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        let reconcile = NSMenuItem(title: "Reconcile realized YTD…", action: #selector(reconcileRealizedYTD), keyEquivalent: "")
+        reconcile.target = self
+        menu.addItem(reconcile)
+
         let rename = NSMenuItem(title: "Rename\u{2026}", action: #selector(renamePortfolioClicked), keyEquivalent: "")
         rename.target = self
         menu.addItem(rename)
@@ -2035,6 +2063,11 @@ class MarketPopoverController: NSObject, NSTextFieldDelegate, NSPopoverDelegate 
         menu.addItem(delete)
 
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    }
+
+    @objc private func reconcileRealizedYTD() {
+        guard let w = widget else { return }
+        if RealizedYearToDateForm.present(widget: w) { rebuildContent() }
     }
 
     @objc private func addPortfolioClicked(_ sender: NSButton) {

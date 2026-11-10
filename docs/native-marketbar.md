@@ -33,6 +33,38 @@ the resulting negative balance and lets you cancel or explicitly record the
 buy anyway. The shortfall remains in cash and is deducted from portfolio value;
 the override never adds a deposit.
 
+Use **Set** for a correction to known shares and average cost: it records an
+auditable position adjustment without changing cash. **Manage → Reconcile
+realized YTD…** (also on the active menu-bar portfolio tab) accepts a signed,
+broker-reported current-year total through now. The dated reconciliation
+preserves all trades, shares, cost basis and cash. Later recorded sales add to
+that amount; the next calendar year starts fresh. Reporting years use Eastern
+Time. Main-window, dropdown and research activity totals use this YTD figure;
+combined portfolios sum each account's independently reconciled result. The
+original all-time result derived solely from the ledger remains available in
+the model, so a reconciliation does not rewrite historical trades.
+
+## Sharpe ratio
+
+The portfolio page shows the active portfolio's Sharpe ratio beside its other
+figures, and a **Sharpe ratio by portfolio** table with one row per portfolio
+(plus All Portfolios when enabled): ratio, total return, annualized volatility
+and how many trading days the figures rest on. The menu-bar dropdown shows the
+ratio for the portfolio on the selected tab.
+
+Each ratio uses that portfolio's complete recorded history, with holding and
+cash changes neutralized and isolated glitches removed, collapsed to one close
+per trading day. Observations after the 8pm extended-hours close count toward
+the next session. Daily returns in excess of the risk-free rate are divided by
+their sample standard deviation and annualized over 252 trading days, or 365
+for a portfolio holding crypto. The risk-free rate defaults to 4.00% and is
+edited with the **Risk-free** button; it is not fetched.
+
+A ratio needs five daily returns and is marked *early* below twenty. It is an
+estimate from this app's observations and covers only the days Marketbar was
+recording, so it will differ from a broker's figure. The research workspace
+does not show it yet.
+
 ## Refresh and energy behavior
 
 Standard mode honors the configured stock interval and market-session schedule.
@@ -60,7 +92,7 @@ These remove redundant work; no battery-life percentage has been measured.
 
 ## Verification
 
-Run `swift test` using an Xcode toolchain with XCTest available. The suite includes
+Run `./test.sh` ([testing](testing.md)). The suite includes
 native UI tests for clicking a ticker, navigating detail tabs, closing nested
 popovers, preserving an app-window draft and table selection, and changing the
 live status item through the production dropdown action and dismissal path.
@@ -72,5 +104,4 @@ Installation uses temporary staging that is removed on success or failure;
 the app redirects alternate copies to the verified installed app before loading
 preferences. For real screen
 captures, use `./take-screenshots.sh`. Optional view-rendering previews from UI
-tests can be saved with `BARISTA_UI_PREVIEW_DIR=/tmp/barista-previews swift test`;
-AppKit layer-backed surfaces may not appear correctly in those bitmap previews.
+tests can be saved with `./test.sh --previews`.

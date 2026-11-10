@@ -46,11 +46,7 @@ pending quote rows offer **Retry**, which never deletes positions or trades.
 
 All tests set `BARISTA_TEST_MODE=1`. Production recovery is disabled in tests;
 explicit test stores require in-memory preferences and disposable directories.
-Run the full suite with the installed Xcode toolchain:
-
-```sh
-BARISTA_TEST_MODE=1 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test --parallel
-```
+Run the full suite with `./test.sh` ([testing](testing.md)).
 
 `RecoveryTests.swift` covers full round trips, undo, validation failures,
 backup/export portability, retention, nested edits, missing chart history,

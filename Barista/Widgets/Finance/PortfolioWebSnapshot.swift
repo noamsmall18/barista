@@ -62,7 +62,7 @@ enum PortfolioWebSnapshot {
                         "unrealizedPL": number(currencyComparable ? snapshot.totalPL : nil), "unrealizedPercent": number(currencyComparable ? snapshot.totalPercent : nil),
                         "partialCost": snapshot.hasPartialCostBasis,
                         "missingCostCount": snapshot.positionsMissingCost.count,
-                        "realizedPL": number(active?.realizedTotal ?? 0),
+                        "realizedPL": number(config.realizedYearToDate()),
                         "winners": snapshot.winners, "losers": snapshot.losers, "positions": positions.count] as [String: Any],
             "trades": (active?.tradeHistory ?? []).prefix(100).map { trade in
                 ["date": trade.date.timeIntervalSince1970, "symbol": trade.symbol,

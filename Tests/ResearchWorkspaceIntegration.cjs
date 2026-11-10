@@ -30,6 +30,8 @@ test('real helper serves a complete desk, survives launcher exit, and restores s
   t.after(async()=>{
     if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGTERM');await once(child,'exit');}
     try{execFileSync('/usr/bin/defaults',['delete',domain],{stdio:'ignore'});}catch{}
+    // `defaults delete` empties the domain but leaves its file behind.
+    fs.rmSync(path.join(os.homedir(),'Library/Preferences',`${domain}.plist`),{force:true});
     fs.rmSync(root,{recursive:true,force:true});
   });
   const config={symbols:[],coins:[],portfolios:[{id:'independent',name:'Independent check',cash:350,holdings:{},costBasis:{},transactions:[]}],activePortfolioID:'independent'};

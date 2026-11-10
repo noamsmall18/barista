@@ -110,6 +110,59 @@ final class PortfolioIntradayHistoryTests: XCTestCase {
         XCTAssertEqual(widget.config.portfolios, original)
     }
 
+    /// 8:00-9:29 ET premarket then 9:30-9:59 ET, one point a minute.
+    private func premarketThenOpen() -> [Date] {
+        let premarket = ISO8601DateFormatter().date(from: "2026-10-09T12:00:00Z")!
+        return (0..<120).map { premarket.addingTimeInterval(Double($0) * 60) }
+    }
+
+    func testPremarketTakesASmallSliceOnceTheSessionOpens() throws {
+        let dates = premarketThenOpen()
+        let even = PortfolioChartView.xFractions(for: dates, compressingExtendedHours: false)
+        let compressed = PortfolioChartView.xFractions(for: dates, compressingExtendedHours: true)
+        XCTAssertEqual(even[90], 90.0 / 119, accuracy: 0.0001)
+        XCTAssertEqual(compressed[90], PortfolioChartView.extendedHoursShare, accuracy: 0.0001)
+        XCTAssertEqual(compressed.first, 0)
+        XCTAssertEqual(compressed.last, 1)
+        XCTAssertEqual(compressed, compressed.sorted())
+        // Before the open there is nothing to make room for.
+        let premarketOnly = Array(dates.prefix(90))
+        XCTAssertEqual(PortfolioChartView.xFractions(for: premarketOnly, compressingExtendedHours: true),
+                       PortfolioChartView.xFractions(for: premarketOnly, compressingExtendedHours: false))
+    }
+
+    func testDropdownAndWindowOneDayChartsCompressRecordedPremarket() throws {
+        _ = NSApplication.shared
+        let dates = premarketThenOpen()
+        let points = dates.enumerated().map {
+            PortfolioHistoryService.Point(time: $0.element, value: 100_000 + Double($0.offset), trading: .equities)
+        }
+        let prefs = InMemoryTestPreferences(suiteName: "premarket-chart-\(UUID().uuidString)")!
+        prefs.set(try JSONEncoder().encode(["test": points]), forKey: "barista.portfolioHistory")
+        let history = PortfolioHistoryService(defaults: prefs, clock: { dates.last!.addingTimeInterval(60) })
+        var config = StockTickerConfig(symbols: ["AAA"], coins: [])
+        config.portfolios = [Portfolio(id: "test", name: "Disposable premarket fixture", holdings: ["AAA": 1000])]
+        config.activePortfolioID = "test"
+        config.historyRange = .today
+        let widget = StockTickerWidget(config: config, notificationsEnabled: false,
+                                       initialQuotes: [MarketQuote(symbol: "AAA", price: 100, change: 0, kind: .stock, sparkline: [])],
+                                       historyService: history)
+        let original = widget.config.portfolios
+        let dropdown = MarketPopoverController(widget: widget, fetchesDetailData: false)
+        let window = MarketbarWindowController(widget: widget)
+        defer { if let native = window.window { _ = window.windowShouldClose(native) } }
+        func allViews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(allViews) }
+        for root in [dropdown.buildView(), try XCTUnwrap(window.window?.contentView)] {
+            let chart = try XCTUnwrap(allViews(root).compactMap { $0 as? PortfolioChartView }.first)
+            XCTAssertEqual(chart.samples.map(\.date), dates)
+            XCTAssertTrue(chart.compressesExtendedHours)
+            XCTAssertEqual(chart.xFractions[90], PortfolioChartView.extendedHoursShare, accuracy: 0.0001)
+            // Hovering the middle of the chart lands after the open, not in premarket.
+            XCTAssertGreaterThan(try XCTUnwrap(chart.sampleIndex(nearestFraction: 0.5)), 90)
+        }
+        XCTAssertEqual(widget.config.portfolios, original)
+    }
+
     func testOneDayCurveDoesNotInventMinutesAcrossAWeekendGap() throws {
         let dates = ["2026-10-09T19:50:00Z", "2026-10-09T20:00:00Z", "2026-10-12T13:30:00Z", "2026-10-12T13:40:00Z"]
             .map { ISO8601DateFormatter().date(from: $0)! }

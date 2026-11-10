@@ -8,7 +8,8 @@ project.yml). Zero third-party dependencies — keep it that way.
   settings; Marketbar imports Barista data once on first launch.
 - Build: `./build-app.sh`. Regenerate Xcode project from `project.yml`
   (XcodeGen) instead of hand-editing `.xcodeproj`.
-- Tests live in `Tests/` — run them before and after behavior changes.
+- Tests live in `Tests/` — run `./test.sh` before and after behavior changes
+  (see `docs/testing.md`). It sets test mode and the Xcode toolchain for you.
   Never weaken an assertion to make it pass.
 - Never erase, reset, replace, or edit the user's saved portfolios while testing,
   building, taking screenshots, or verifying changes. Use disposable test data

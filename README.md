@@ -166,13 +166,12 @@ widgets' code; it is simply unreachable.
 ## Tests
 
 ```bash
-swift test
+./test.sh
 ```
 
-Tests automatically use in-memory preferences and cannot start the installed
-app or research helper. Agent-run tests must also explicitly use
-`BARISTA_TEST_MODE=1 swift test`; never reset or replace the installed app's
-portfolio data to verify a change.
+One script runs the Swift and web suites, picks a toolchain that has XCTest,
+and always uses in-memory preferences, so tests cannot start the installed app
+or research helper or touch real portfolio data. See [testing](docs/testing.md).
 
 37 tests covering the trade ledger, portfolio migration, trading-session
 segmentation, DataFetcher's threading contract and the flavour split. They run against a saved real

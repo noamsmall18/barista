@@ -17,7 +17,18 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
     private let totalLabel = NSTextField(labelWithString: "—")
     private let moveLabel = NSTextField(labelWithString: "")
     private let returnLabel = NSTextField(labelWithString: "")
+    private let realizedLabel = NSTextField(labelWithString: "")
     private let allocationLabel = NSTextField(labelWithString: "")
+    private let returnDetail = NSTextField(wrappingLabelWithString: "")
+    private let realizedDetail = NSTextField(wrappingLabelWithString: "")
+    private let allocationDetail = NSTextField(wrappingLabelWithString: "")
+    private let cashDetail = NSTextField(wrappingLabelWithString: "")
+    private let sharpeLabel = NSTextField(labelWithString: "—")
+    private let sharpeDetail = NSTextField(wrappingLabelWithString: "")
+    private let riskTable = NSStackView()
+    private let riskNote = NSTextField(wrappingLabelWithString: "")
+    private let riskRateButton = NSButton(title: "", target: nil, action: nil)
+    private var shownRiskRows: [PortfolioRiskRow]?
     private let freshnessLabel = NSTextField(labelWithString: "")
     private let updateTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -109,28 +120,54 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         sidebar.edgeInsets = NSEdgeInsets(top: 28, left: 20, bottom: 20, right: 20)
         sidebar.wantsLayer = true
         sidebar.layer?.backgroundColor = NSColor(white: 1, alpha: 0.025).cgColor
+        let sidebarEdge = NSView()
+        sidebarEdge.wantsLayer = true
+        sidebarEdge.layer?.backgroundColor = NSColor(white: 1, alpha: 0.06).cgColor
+        sidebarEdge.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebarEdge)
+        NSLayoutConstraint.activate([
+            sidebarEdge.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 193),
+            sidebarEdge.widthAnchor.constraint(equalToConstant: 1),
+            sidebarEdge.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarEdge.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        ])
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(sidebar)
-        sidebar.addArrangedSubview(label("MARKETBAR", size: 14, weight: .bold, color: Theme.brandCyan))
-        sidebar.addArrangedSubview(label("Your portfolio.\nAlways in view.", size: 12, color: Theme.textMuted))
-        sidebar.addArrangedSubview(label("ACTIVE PORTFOLIO", size: 9, weight: .semibold, color: Theme.textFaint))
+        let brand = label("MARKETBAR", size: 14, weight: .bold, color: Theme.brandCyan)
+        sidebar.addArrangedSubview(brand)
+        sidebar.setCustomSpacing(6, after: brand)
+        let tagline = label("Your portfolio.\nAlways in view.", size: 12, color: Theme.textMuted)
+        sidebar.addArrangedSubview(tagline)
+        sidebar.setCustomSpacing(26, after: tagline)
+        let activeCaption = caption("ACTIVE PORTFOLIO")
+        sidebar.addArrangedSubview(activeCaption)
+        sidebar.setCustomSpacing(8, after: activeCaption)
         portfolioPicker.target = self
         portfolioPicker.action = #selector(selectPortfolio)
         sidebar.addArrangedSubview(portfolioPicker)
+        sidebar.setCustomSpacing(8, after: portfolioPicker)
         portfolioPicker.widthAnchor.constraint(equalToConstant: 154).isActive = true
         let portfolioActions = NSStackView(views: [button("New", #selector(newPortfolio)), button("Manage", #selector(managePortfolio))])
         portfolioActions.spacing = 8
+        portfolioActions.distribution = .fillEqually
         sidebar.addArrangedSubview(portfolioActions)
+        portfolioActions.widthAnchor.constraint(equalToConstant: 154).isActive = true
+        sidebar.setCustomSpacing(12, after: portfolioActions)
         combinedPortfolioSwitch.target = self
         combinedPortfolioSwitch.action = #selector(toggleCombinedPortfolio)
         combinedPortfolioSwitch.identifier = NSUserInterfaceItemIdentifier("portfolio.combined.toggle")
         combinedPortfolioSwitch.toolTip = "Show an automatic portfolio combining every portfolio's holdings and cash"
         sidebar.addArrangedSubview(combinedPortfolioSwitch)
+        sidebar.setCustomSpacing(26, after: combinedPortfolioSwitch)
+        let viewCaption = caption("VIEW")
+        sidebar.addArrangedSubview(viewCaption)
+        sidebar.setCustomSpacing(8, after: viewCaption)
         navigation.selectedSegment = 0
         navigation.target = self
         navigation.action = #selector(navigate)
         navigation.segmentStyle = .rounded
         sidebar.addArrangedSubview(navigation)
+        navigation.widthAnchor.constraint(equalToConstant: 154).isActive = true
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
         sidebar.addArrangedSubview(spacer)
@@ -185,18 +222,22 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         refreshModeButton.bezelStyle = .rounded
         refreshModeButton.font = .systemFont(ofSize: 11, weight: .semibold)
         refreshModeButton.toolTip = "Switch between standard polling and the fastest available free polling schedule."
-        let heading = NSStackView(views: [label("Portfolio overview", size: 26, weight: .bold), NSView(), refreshModeButton, button("Refresh now", #selector(refresh))])
-        heading.orientation = .horizontal
-        addFullWidth(heading)
-        freshnessLabel.font = .systemFont(ofSize: 11)
+        let headingText = NSStackView(views: [label("Portfolio overview", size: 26, weight: .bold), freshnessLabel])
+        headingText.orientation = .vertical
+        headingText.alignment = .leading
+        headingText.spacing = 3
+        freshnessLabel.font = .systemFont(ofSize: 11, weight: .medium)
         freshnessLabel.textColor = Theme.textMuted
-        addFullWidth(freshnessLabel)
+        let heading = NSStackView(views: [headingText, NSView(), refreshModeButton, button("Refresh now", #selector(refresh))])
+        heading.orientation = .horizontal
+        heading.alignment = .centerY
+        addFullWidth(heading)
 
         let marketCard = card()
-        marketCard.spacing = 9
-        marketCard.addArrangedSubview(label("MARKET PULSE", size: 10, weight: .semibold, color: Theme.textFaint))
+        marketCard.spacing = 10
+        marketCard.addArrangedSubview(caption("MARKET PULSE"))
         marketStrip.orientation = .horizontal
-        marketStrip.alignment = .centerY
+        marketStrip.alignment = .top
         marketStrip.distribution = .fillEqually
         marketStrip.spacing = 10
         marketCard.addArrangedSubview(marketStrip)
@@ -204,30 +245,61 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         addFullWidth(marketCard)
 
         let summary = card()
-        summary.spacing = 8
-        summary.addArrangedSubview(label("LIVE PORTFOLIO VALUE", size: 10, weight: .semibold, color: Theme.textFaint))
-        totalLabel.font = .monospacedDigitSystemFont(ofSize: 38, weight: .semibold)
+        summary.spacing = 6
+        summary.addArrangedSubview(caption("LIVE PORTFOLIO VALUE"))
+        totalLabel.font = .monospacedDigitSystemFont(ofSize: 40, weight: .semibold)
         totalLabel.textColor = Theme.textPrimary
         totalLabel.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.total")
         summary.addArrangedSubview(totalLabel)
         moveLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
         summary.addArrangedSubview(moveLabel)
-        returnLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        summary.addArrangedSubview(returnLabel)
-        allocationLabel.font = .systemFont(ofSize: 11)
-        allocationLabel.textColor = Theme.textMuted
-        summary.addArrangedSubview(allocationLabel)
-        let cashRow = NSStackView(views: [cashLabel, NSView(), button("Edit cash", #selector(editCash))])
-        cashLabel.font = .systemFont(ofSize: 11)
-        cashLabel.textColor = Theme.textMuted
-        summary.addArrangedSubview(cashRow)
-        cashRow.widthAnchor.constraint(equalTo: summary.widthAnchor, constant: -36).isActive = true
+        summary.setCustomSpacing(16, after: moveLabel)
+
+        realizedLabel.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.realizedYTD")
+        sharpeLabel.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.sharpe")
+        sharpeDetail.identifier = NSUserInterfaceItemIdentifier("marketbar.portfolio.sharpe-detail")
+        let realizedTile = statTile("REALIZED YTD", value: realizedLabel, detail: realizedDetail)
+        realizedTile.toolTip = "Current calendar year in Eastern Time. Uses a broker reconciliation, when supplied, plus subsequent recorded sales. Edit under Manage."
+        let sharpeTile = statTile("SHARPE RATIO", value: sharpeLabel, detail: sharpeDetail)
+        sharpeTile.toolTip = "Annualized Sharpe ratio from this portfolio's daily closes, in excess of the risk-free rate. Holding and cash changes are neutralized first."
+        let performanceRow = tileRow([statTile("UNREALIZED RETURN", value: returnLabel, detail: returnDetail), realizedTile, sharpeTile])
+        summary.addArrangedSubview(performanceRow)
+        performanceRow.widthAnchor.constraint(equalTo: summary.widthAnchor, constant: -36).isActive = true
+        summary.setCustomSpacing(10, after: performanceRow)
+        let cashTile = statTile("CASH", value: cashLabel, detail: cashDetail, accessory: button("Edit cash", #selector(editCash)))
+        let holdingsRow = tileRow([statTile("ALLOCATION", value: allocationLabel, detail: allocationDetail), cashTile])
+        summary.addArrangedSubview(holdingsRow)
+        holdingsRow.widthAnchor.constraint(equalTo: summary.widthAnchor, constant: -36).isActive = true
         addFullWidth(summary)
         missingLabel.font = .systemFont(ofSize: 11)
         missingLabel.textColor = Theme.brandAmber
         missingLabel.lineBreakMode = .byWordWrapping
         missingLabel.maximumNumberOfLines = 2
         addFullWidth(missingLabel)
+
+        let riskCard = card()
+        riskRateButton.target = self
+        riskRateButton.action = #selector(editRiskFreeRate)
+        riskRateButton.bezelStyle = .rounded
+        riskRateButton.font = .systemFont(ofSize: 11, weight: .medium)
+        riskRateButton.identifier = NSUserInterfaceItemIdentifier("marketbar.risk.rate")
+        riskRateButton.toolTip = "Annual risk-free rate subtracted from returns. Set it to the current Treasury bill yield."
+        let riskHeader = NSStackView(views: [caption("SHARPE RATIO BY PORTFOLIO"), NSView(), riskRateButton])
+        riskHeader.alignment = .centerY
+        riskCard.addArrangedSubview(riskHeader)
+        riskHeader.widthAnchor.constraint(equalTo: riskCard.widthAnchor, constant: -36).isActive = true
+        riskTable.orientation = .vertical
+        riskTable.alignment = .leading
+        riskTable.spacing = 0
+        riskTable.identifier = NSUserInterfaceItemIdentifier("marketbar.risk.table")
+        riskCard.addArrangedSubview(riskTable)
+        riskTable.widthAnchor.constraint(equalTo: riskCard.widthAnchor, constant: -36).isActive = true
+        riskNote.font = .systemFont(ofSize: 10)
+        riskNote.textColor = Theme.textMuted
+        riskCard.addArrangedSubview(riskNote)
+        riskNote.widthAnchor.constraint(equalTo: riskCard.widthAnchor, constant: -36).isActive = true
+        shownRiskRows = nil
+        addFullWidth(riskCard)
 
         let chartCard = card()
         rangeControl.target = self
@@ -237,7 +309,8 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         historyRaw.action = #selector(changeHistoryRaw)
         historyRaw.identifier = NSUserInterfaceItemIdentifier("portfolio.history.raw")
         historyRaw.toolTip = "Inspect original recorded values, including edits and suspect observations."
-        let chartHeader = NSStackView(views: [label("VALUE OVER TIME", size: 10, weight: .semibold, color: Theme.textFaint), NSView(), historyRaw, rangeControl])
+        let chartHeader = NSStackView(views: [caption("VALUE OVER TIME"), NSView(), historyRaw, rangeControl])
+        chartHeader.alignment = .centerY
         chartCard.addArrangedSubview(chartHeader)
         chartHeader.widthAnchor.constraint(equalTo: chartCard.widthAnchor, constant: -36).isActive = true
         chartCard.addArrangedSubview(chart)
@@ -254,7 +327,9 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         addFullWidth(chartCard)
 
         let title = NSStackView(views: [label("Watchlist", size: 20, weight: .semibold), NSView(), button("Position", #selector(editPosition)), button("Remove", #selector(removeSymbol))])
+        title.alignment = .centerY
         addFullWidth(title)
+        page.setCustomSpacing(12, after: title)
         let searchRow = NSStackView()
         searchRow.orientation = .horizontal
         searchRow.spacing = 10
@@ -294,8 +369,10 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
             }
             table.dataSource = self
             table.delegate = self
-            table.rowHeight = 38
-            table.intercellSpacing = NSSize(width: 12, height: 4)
+            table.rowHeight = 40
+            table.intercellSpacing = NSSize(width: 12, height: 2)
+            table.gridStyleMask = .solidHorizontalGridLineMask
+            table.gridColor = NSColor(white: 1, alpha: 0.05)
             table.backgroundColor = .clear
             table.usesAlternatingRowBackgroundColors = false
             table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
@@ -309,6 +386,11 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         tableScroll.hasHorizontalScroller = true
         tableScroll.autohidesScrollers = true
         tableScroll.documentView = table
+        tableScroll.wantsLayer = true
+        tableScroll.layer?.cornerRadius = 12
+        tableScroll.layer?.borderWidth = 1
+        tableScroll.layer?.borderColor = NSColor(white: 1, alpha: 0.075).cgColor
+        tableScroll.layer?.backgroundColor = NSColor(white: 1, alpha: 0.02).cgColor
         tableScroll.heightAnchor.constraint(equalToConstant: 300).isActive = true
         addFullWidth(tableScroll)
         addFullWidth(label("Double-click a ticker for its chart, financials and headlines. Return shows only positions with recorded cost basis.", size: 11, color: Theme.textFaint))
@@ -411,33 +493,47 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
                 moveLabel.textColor = Theme.textMuted
             }
             if currencyComparable, let totalPL = snapshot.totalPL, let totalPercent = snapshot.totalPercent {
-                let coverage = snapshot.hasPartialCostBasis ? " · cost basis recorded for part of portfolio" : " · since purchase"
-                returnLabel.stringValue = "Total return  \(widget.formatSignedCurrency(totalPL)) (\(String(format: "%+.2f%%", totalPercent)))\(coverage)"
+                returnLabel.stringValue = "\(widget.formatSignedCurrency(totalPL)) (\(String(format: "%+.2f%%", totalPercent)))"
                 returnLabel.textColor = widget.intensityColor(for: totalPercent)
+                returnDetail.stringValue = snapshot.hasPartialCostBasis ? "Cost basis recorded for part of portfolio" : "Since purchase"
             } else if !currencyComparable {
-                returnLabel.stringValue = "Total return unavailable across mixed currencies."
+                returnLabel.stringValue = "—"
                 returnLabel.textColor = Theme.textMuted
+                returnDetail.stringValue = "Total return unavailable across mixed currencies."
             } else {
-                returnLabel.stringValue = "Record position cost basis to track total return."
+                returnLabel.stringValue = "—"
                 returnLabel.textColor = Theme.textMuted
+                returnDetail.stringValue = "Record position cost basis to track total return."
             }
             if currencyComparable {
                 let invested = snapshot.positions.map(\.liveValue).reduce(0, +)
                 let investedPercent = snapshot.liveTotal > 0 ? invested / snapshot.liveTotal * 100 : 0
                 let leader = snapshot.positions.max { $0.liveValue < $1.liveValue }
-                allocationLabel.stringValue = "Invested \(String(format: "%.0f%%", investedPercent)) of portfolio\(leader.map { " · largest holding \($0.quote.symbol), \(String(format: "%.0f%%", $0.liveValue / max(snapshot.liveTotal, 1) * 100))" } ?? "")"
+                allocationLabel.stringValue = "\(String(format: "%.0f%%", investedPercent)) invested"
+                allocationDetail.stringValue = leader.map { "Largest holding \($0.quote.symbol), \(String(format: "%.0f%%", $0.liveValue / max(snapshot.liveTotal, 1) * 100)) of portfolio" } ?? "No positions held"
             } else {
-                allocationLabel.stringValue = "Allocation unavailable across mixed currencies."
+                allocationLabel.stringValue = "—"
+                allocationDetail.stringValue = "Allocation unavailable across mixed currencies."
             }
         } else {
             moveLabel.stringValue = "Add a position to start tracking your portfolio."
             moveLabel.textColor = Theme.textMuted
-            returnLabel.stringValue = ""
-            allocationLabel.stringValue = ""
+            returnLabel.stringValue = "—"
+            returnLabel.textColor = Theme.textMuted
+            returnDetail.stringValue = ""
+            allocationLabel.stringValue = "—"
+            allocationDetail.stringValue = ""
         }
-        let automatic = config.isCombinedPortfolioActive ? "Automatic · \(config.portfolios.count) portfolios · " : ""
-        cashLabel.stringValue = "\(automatic)Cash \(widget.formatCurrency(config.cash)) · \(config.holdings.count) positions"
-        cashLabel.textColor = config.cash < 0 ? Theme.red : Theme.textMuted
+        let realized = config.realizedYearToDate()
+        realizedLabel.stringValue = currencyComparable ? widget.formatSignedCurrency(realized) : "—"
+        realizedLabel.textColor = currencyComparable ? widget.intensityColor(for: realized >= 0 ? 1 : -1) : Theme.textMuted
+        realizedDetail.stringValue = currencyComparable ? "This calendar year · Eastern Time" : "Realized YTD unavailable across mixed currencies."
+        cashLabel.stringValue = widget.formatCurrency(config.cash)
+        cashLabel.textColor = config.cash < 0 ? Theme.red : Theme.textPrimary
+        let positionCount = "\(config.holdings.count) position\(config.holdings.count == 1 ? "" : "s")"
+        cashDetail.stringValue = config.isCombinedPortfolioActive
+            ? "Automatic · \(config.portfolios.count) portfolios · \(positionCount)" : positionCount
+        updateRisk(currencyComparable: currencyComparable)
         let missing = snapshot?.missingSymbols ?? []
         missingLabel.stringValue = missing.isEmpty ? "" : "Waiting for prices: \(missing.joined(separator: ", ")). Total excludes these positions."
         missingLabel.isHidden = missing.isEmpty
@@ -474,16 +570,14 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         let indices = [("S&P 500 · SPY", "SPY"), ("NASDAQ 100 · QQQ", "QQQ"), ("Dow Jones · DIA", "DIA")]
         for (name, symbol) in indices {
             let quote = widget.indexQuotes.first { $0.symbol == symbol }
-            let tile = NSStackView()
-            tile.orientation = .vertical
-            tile.alignment = .leading
-            tile.spacing = 4
-            let title = label(name, size: 10, weight: .medium, color: Theme.textFaint)
-            let value = label(quote.map { "\(widget.formatCurrency($0.currentPrice))   \(String(format: "%+.2f%%", $0.currentChange))" } ?? "Waiting for quote", size: 12, weight: .semibold)
-            value.textColor = quote.map { widget.intensityColor(for: $0.currentChange) } ?? Theme.textMuted
-            value.toolTip = quote.map { "\(symbol): \(widget.formatCurrency($0.currentPrice)), \(String(format: "%+.2f%%", $0.currentChange)) today" }
-            tile.addArrangedSubview(title)
-            tile.addArrangedSubview(value)
+            let price = NSTextField(labelWithString: quote.map { widget.formatCurrency($0.currentPrice) } ?? "Waiting for quote")
+            price.font = .monospacedDigitSystemFont(ofSize: quote == nil ? 12 : 16, weight: .semibold)
+            price.textColor = quote == nil ? Theme.textMuted : Theme.textPrimary
+            let change = NSTextField(wrappingLabelWithString: quote.map { "\(String(format: "%+.2f%%", $0.currentChange)) today" } ?? "")
+            change.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+            change.textColor = quote.map { widget.intensityColor(for: $0.currentChange) } ?? Theme.textMuted
+            let tile = statTile(name, value: price, detail: change, keepsFonts: true)
+            tile.toolTip = quote.map { "\(symbol): \(widget.formatCurrency($0.currentPrice)), \(String(format: "%+.2f%%", $0.currentChange)) today" }
             marketStrip.addArrangedSubview(tile)
         }
     }
@@ -504,6 +598,7 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         let originals = Dictionary(uniqueKeysWithValues: widget.portfolioHistoryPoints(range: historyRange, raw: true).map { ($0.time, $0.value) })
         chart.samples = points.map { .init(date: $0.time, value: $0.value, observedValue: originals[$0.time]) }
         chart.axisStyle = historyRange.isIntraday ? .time : .date
+        chart.compressesExtendedHours = historyRange.isIntraday && !widget.portfolioTradesContinuously
         chart.accent = widget.intensityColor(for: points.first.map { first in
             first.value > 0 ? ((points.last?.value ?? first.value) / first.value - 1) * 100 : 0
         } ?? 0)
@@ -515,6 +610,107 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         chart.toolTip = historyNote.stringValue
 
         chartEmpty.isHidden = chart.samples.count >= 2
+    }
+
+    // MARK: - Sharpe ratio
+
+    private func sharpeColor(_ metrics: PortfolioRiskMetrics) -> NSColor {
+        guard let sharpe = metrics.sharpe else { return Theme.textMuted }
+        return sharpe < 0 ? Theme.red : sharpe >= 1 ? Theme.green : Theme.textPrimary
+    }
+
+    private func updateRisk(currencyComparable: Bool) {
+        let rate = String(format: "%.2f%%", widget.config.riskFreeRatePercent)
+        riskRateButton.title = "Risk-free \(rate)…"
+        riskNote.stringValue = "Annualized from each portfolio's daily closes over all recorded history, in excess of a \(rate) risk-free rate. Holding and cash changes are neutralized. An estimate from this app's observations, not a broker figure."
+        guard currencyComparable else {
+            sharpeLabel.stringValue = "—"
+            sharpeLabel.textColor = Theme.textMuted
+            sharpeDetail.stringValue = "Sharpe ratio unavailable across mixed currencies."
+            return
+        }
+        let active = widget.activePortfolioRiskMetrics()
+        sharpeLabel.stringValue = active.sharpeText
+        sharpeLabel.textColor = sharpeColor(active)
+        sharpeDetail.stringValue = active.annualVolatilityPercent.map {
+            "\(active.coverageText) · volatility \(String(format: "%.1f%%", $0))"
+        } ?? active.coverageText
+
+        let rows = widget.portfolioRiskRows()
+        guard rows != shownRiskRows else { return }
+        shownRiskRows = rows
+        riskTable.arrangedSubviews.forEach { riskTable.removeArrangedSubview($0); $0.removeFromSuperview() }
+        let header = riskRow(["PORTFOLIO", "SHARPE", "RETURN", "VOLATILITY", "HISTORY"].map { caption($0) })
+        riskTable.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: riskTable.widthAnchor).isActive = true
+        for row in rows {
+            let m = row.metrics
+            let name = NSTextField(labelWithString: row.name)
+            name.font = .systemFont(ofSize: 12, weight: row.isActive ? .semibold : .regular)
+            name.textColor = row.isActive ? Theme.brandCyan : Theme.textPrimary
+            name.lineBreakMode = .byTruncatingTail
+            name.toolTip = row.isActive ? "\(row.name) · shown above" : row.name
+            let sharpe = Theme.monoLabel(m.sharpeText, size: 13, color: sharpeColor(m))
+            sharpe.font = .monospacedDigitSystemFont(ofSize: 13, weight: .semibold)
+            sharpe.identifier = NSUserInterfaceItemIdentifier("marketbar.risk.sharpe.\(row.id)")
+            let period = Theme.monoLabel(m.periodReturnPercent.map { String(format: "%+.2f%%", $0) } ?? "—", size: 12,
+                                         color: m.periodReturnPercent.map { widget.intensityColor(for: $0) } ?? Theme.textMuted)
+            period.toolTip = "Total market movement across the recorded history"
+            let volatility = Theme.monoLabel(m.annualVolatilityPercent.map { String(format: "%.1f%%", $0) } ?? "—", size: 12,
+                                             color: m.annualVolatilityPercent == nil ? Theme.textMuted : Theme.textPrimary)
+            volatility.toolTip = "Annualized standard deviation of daily returns"
+            let coverage = NSTextField(labelWithString: m.coverageText)
+            coverage.font = .systemFont(ofSize: 11)
+            coverage.textColor = Theme.textMuted
+            coverage.lineBreakMode = .byTruncatingTail
+            coverage.toolTip = m.coverageText
+            let line = NSView()
+            line.wantsLayer = true
+            line.layer?.backgroundColor = NSColor(white: 1, alpha: 0.06).cgColor
+            line.heightAnchor.constraint(equalToConstant: 1).isActive = true
+            riskTable.addArrangedSubview(line)
+            line.widthAnchor.constraint(equalTo: riskTable.widthAnchor).isActive = true
+            let view = riskRow([name, sharpe, period, volatility, coverage])
+            view.setAccessibilityLabel("\(row.name): Sharpe ratio \(m.sharpeText), \(m.coverageText)")
+            riskTable.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: riskTable.widthAnchor).isActive = true
+        }
+    }
+
+    /// Fixed column shares, so every row lines up without a table view.
+    private func riskRow(_ cells: [NSView]) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        let shares: [CGFloat] = [0.24, 0.12, 0.14, 0.14, 0.36]
+        var offset: CGFloat = 0
+        for (cell, share) in zip(cells, shares) {
+            cell.translatesAutoresizingMaskIntoConstraints = false
+            cell.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            row.addSubview(cell)
+            let guide = NSLayoutGuide()
+            row.addLayoutGuide(guide)
+            NSLayoutConstraint.activate([
+                guide.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+                guide.widthAnchor.constraint(equalTo: row.widthAnchor, multiplier: max(offset, 0.0001)),
+                cell.leadingAnchor.constraint(equalTo: offset == 0 ? row.leadingAnchor : guide.trailingAnchor),
+                cell.widthAnchor.constraint(equalTo: row.widthAnchor, multiplier: share, constant: -10),
+                cell.centerYAnchor.constraint(equalTo: row.centerYAnchor)
+            ])
+            offset += share
+        }
+        return row
+    }
+
+    @objc private func editRiskFreeRate() {
+        guard let raw = input(title: "Risk-free rate", value: String(format: "%.2f", widget.config.riskFreeRatePercent),
+                              hint: "Annual percent, e.g. 4.00") else { return }
+        guard let percent = Double(raw.replacingOccurrences(of: "%", with: "").replacingOccurrences(of: ",", with: ".")),
+              widget.setRiskFreeRate(percent: percent) else {
+            problem("Enter an annual rate between 0 and 25 percent.")
+            return
+        }
+        updateData()
     }
 
     private func isCurrencyComparable(_ snapshot: PortfolioSnapshot) -> Bool {
@@ -655,13 +851,16 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
     @objc private func managePortfolio() {
         guard !widget.config.isCombinedPortfolioActive else { return }
         let menu = NSMenu()
-        for (title, action) in [("Rename portfolio…", #selector(renamePortfolio)), ("Delete portfolio…", #selector(deletePortfolio))] {
+        for (title, action) in [("Reconcile realized YTD…", #selector(reconcileRealizedYTD)), ("Rename portfolio…", #selector(renamePortfolio)), ("Delete portfolio…", #selector(deletePortfolio))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             item.isEnabled = action != #selector(deletePortfolio) || widget.config.portfolios.count > 1
             menu.addItem(item)
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: portfolioPicker.bounds.minY), in: portfolioPicker)
+    }
+    @objc private func reconcileRealizedYTD() {
+        if RealizedYearToDateForm.present(widget: widget) { updateData() }
     }
     @objc private func renamePortfolio() {
         guard !widget.config.isCombinedPortfolioActive else { return }
@@ -816,6 +1015,65 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         button.font = .systemFont(ofSize: 11, weight: .medium)
         return button
     }
+    private func caption(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.attributedStringValue = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            .foregroundColor: Theme.textFaint,
+            .kern: 0.9
+        ])
+        return label
+    }
+
+    /// A caption, one prominent figure and a line of context. The value and
+    /// detail labels are owned by the caller so live updates never rebuild it.
+    private func statTile(_ title: String, value: NSTextField, detail: NSTextField, accessory: NSView? = nil,
+                          keepsFonts: Bool = false) -> NSStackView {
+        if !keepsFonts {
+            value.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
+            detail.font = .systemFont(ofSize: 11)
+            detail.textColor = Theme.textMuted
+        }
+        value.lineBreakMode = .byTruncatingTail
+        value.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        detail.maximumNumberOfLines = 2
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let tile = NSStackView()
+        tile.orientation = .vertical
+        tile.alignment = .leading
+        tile.spacing = 5
+        tile.edgeInsets = NSEdgeInsets(top: 12, left: 14, bottom: 12, right: 14)
+        tile.wantsLayer = true
+        tile.layer?.backgroundColor = NSColor(white: 1, alpha: 0.035).cgColor
+        tile.layer?.cornerRadius = 10
+        if let accessory {
+            let top = NSStackView(views: [caption(title), NSView(), accessory])
+            top.alignment = .centerY
+            tile.addArrangedSubview(top)
+            top.widthAnchor.constraint(equalTo: tile.widthAnchor, constant: -28).isActive = true
+        } else {
+            tile.addArrangedSubview(caption(title))
+        }
+        tile.addArrangedSubview(value)
+        tile.addArrangedSubview(detail)
+        for view in [value, detail] {
+            view.widthAnchor.constraint(lessThanOrEqualTo: tile.widthAnchor, constant: -28).isActive = true
+        }
+        return tile
+    }
+
+    private func tileRow(_ tiles: [NSView]) -> NSStackView {
+        let row = NSStackView(views: tiles)
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = 10
+        if let first = tiles.first {
+            tiles.dropFirst().forEach { $0.heightAnchor.constraint(equalTo: first.heightAnchor).isActive = true }
+        }
+        return row
+    }
+
     private func card() -> NSStackView {
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -824,7 +1082,7 @@ final class MarketbarWindowController: NSWindowController, NSWindowDelegate, NST
         stack.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         stack.wantsLayer = true
         stack.layer?.backgroundColor = NSColor(white: 1, alpha: 0.035).cgColor
-        stack.layer?.cornerRadius = 12
+        stack.layer?.cornerRadius = 14
         stack.layer?.borderWidth = 1
         stack.layer?.borderColor = NSColor(white: 1, alpha: 0.075).cgColor
         return stack

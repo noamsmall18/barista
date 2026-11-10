@@ -3,8 +3,10 @@ import XCTest
 
 final class ResearchWorkspaceStoreTests: XCTestCase {
     private func isolatedDefaults() -> (UserDefaults, String) {
+        // In memory, like every other suite: an on-disk suite leaves an empty
+        // preferences file behind for each run even after its domain is removed.
         let name = "barista.tests.research.\(UUID().uuidString)"
-        return (UserDefaults(suiteName: name)!, name)
+        return (InMemoryTestPreferences(suiteName: name)!, name)
     }
 
     func testNotesAndPreferencesPersistWithoutReplacingOtherSymbols() throws {

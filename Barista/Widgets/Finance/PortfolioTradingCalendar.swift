@@ -81,6 +81,14 @@ enum PortfolioTradingCalendar {
         return minute >= 240 && minute <= (isEarlyClose(date) ? 1020 : 1200)
     }
 
+    /// 9:30 to the close, inclusive of the closing print.
+    static func isRegularSession(_ date: Date) -> Bool {
+        guard isTradingDay(date) else { return false }
+        let cal = calendar
+        let minute = cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+        return minute >= 570 && minute <= (isEarlyClose(date) ? 780 : 960)
+    }
+
     static func isOvernightSession(_ date: Date) -> Bool {
         let cal = calendar
         let hour = cal.component(.hour, from: date)

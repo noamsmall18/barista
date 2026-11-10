@@ -110,13 +110,7 @@ final class TerminalChartHoverTests: XCTestCase {
             try move(to: 0.5, in: chart)
             chart.update(history: history())
             XCTAssertEqual(chart.hoverIndex, 2)
-            if let directory = ProcessInfo.processInfo.environment["BARISTA_UI_PREVIEW_DIR"] {
-                let bitmap = try XCTUnwrap(chart.bitmapImageRepForCachingDisplay(in: chart.bounds))
-                chart.cacheDisplay(in: chart.bounds, to: bitmap)
-                let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-                try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-                try data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("stock-chart-hover.png"))
-            }
+            try UIPreview.save(chart, named: "stock-chart-hover")
         }
     }
 }

@@ -191,25 +191,17 @@ spreadsheet formula prefixes. No external packages, scripts, or fonts are used.
 ## Verification
 
 ```sh
-node --test Tests/Web/*.test.cjs
-swiftc Barista/Widgets/Finance/ResearchWorkspaceRequest.swift \
-  Barista/Widgets/Finance/ResearchWorkspaceDefaults.swift \
-  Barista/Widgets/Finance/ResearchWorkspaceStore.swift \
-  Tests/ResearchWorkspaceSmoke.swift -o /tmp/research-smoke
-/tmp/research-smoke
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcrun swift test
+./test.sh                  # Swift and web suites
 ./build-research.sh
-node --test Tests/ResearchWorkspaceIntegration.cjs
+./test.sh integration      # the built helper, under a temporary identity
 ./open-research.sh
 node Tests/Web/preview-server.cjs
 ```
 
 The preview at `http://127.0.0.1:4178/` visibly identifies sample data. It uses
 illustrative quotes and research with an in-memory workspace; it never reads app
-preferences or contacts financial providers. Native smoke checks run shipped
-request and storage code with an in-memory UserDefaults substitute. They
-supplement XCTest. Use the installed Xcode toolchain for XCTest; Command Line
-Tools alone may not contain that framework.
+preferences or contacts financial providers. `ResearchWorkspaceGateTests` runs the shipped request and storage code with an
+in-memory UserDefaults substitute. See [testing](testing.md) for the toolchain.
 
 The standalone integration check uses a temporary helper bundle and preferences
 domain. It verifies real HTTP assets, same-origin writes, full notebook/model

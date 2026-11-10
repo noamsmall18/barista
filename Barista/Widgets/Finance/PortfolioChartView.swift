@@ -38,6 +38,22 @@ final class PortfolioChartView: NSView {
     enum AxisStyle { case date, time }
     var axisStyle: AxisStyle = .date { didSet { needsDisplay = true } }
 
+    /// Gives stretches outside the regular session a small slice of the width
+    /// once the session has begun, so a quiet premarket doesn't crowd out the
+    /// move since the open. For equity intraday charts only: a continuously
+    /// traded portfolio has no off-hours to compress.
+    var compressesExtendedHours = false { didSet { rebuildGeometry(); needsDisplay = true } }
+
+    /// Combined share of the width that off-hours stretches may take.
+    static let extendedHoursShare: CGFloat = 0.2
+
+    /// Horizontal position of each sample, 0...1 across the plot.
+    private(set) var xFractions: [CGFloat] = []
+
+    /// Where the regular session starts or ends, drawn only when compressed so
+    /// the uneven time scale is visible.
+    private var sessionBoundaries: [CGFloat] = []
+
     private var axisFormatter: DateFormatter {
         let f = DateFormatter()
         f.timeZone = PortfolioTradingCalendar.calendar.timeZone
@@ -72,6 +88,15 @@ final class PortfolioChartView: NSView {
     }
 
     private func rebuildGeometry() {
+        let dates = samples.map(\.date)
+        xFractions = Self.xFractions(for: dates, compressingExtendedHours: compressesExtendedHours)
+        sessionBoundaries = []
+        if compressesExtendedHours, xFractions != Self.xFractions(for: dates, compressingExtendedHours: false) {
+            let regular = dates.map(PortfolioTradingCalendar.isRegularSession)
+            sessionBoundaries = regular.indices.dropFirst().filter { regular[$0] != regular[$0 - 1] }
+                .map { xFractions[regular[$0] ? $0 : $0 - 1] }
+        }
+
         var values = samples.map(\.value)
         if let benchmark { values += benchmark.map(\.value) }
         guard let lo = values.min(), let hi = values.max() else {
@@ -88,10 +113,34 @@ final class PortfolioChartView: NSView {
         }
     }
 
+    /// Each step between neighbouring samples takes one unit of width. With
+    /// compression, steps not wholly inside the regular session (including the
+    /// step into the open) share at most `extendedHoursShare` of it, and only
+    /// when the session has steps too: a chart that is all premarket still
+    /// uses the full width.
+    static func xFractions(for dates: [Date], compressingExtendedHours: Bool) -> [CGFloat] {
+        guard dates.count > 1 else { return dates.map { _ in 0 } }
+        let regular = dates.map(PortfolioTradingCalendar.isRegularSession)
+        let offHours = zip(regular, regular.dropFirst()).map { !($0 && $1) }
+        let off = CGFloat(offHours.filter { $0 }.count)
+        let on = CGFloat(offHours.count) - off
+        var weight: CGFloat = 1
+        if compressingExtendedHours, off > 0, on > 0 {
+            weight = min(1, extendedHoursShare / (1 - extendedHoursShare) * on / off)
+        }
+        var positions: [CGFloat] = [0]
+        for isOff in offHours { positions.append(positions.last! + (isOff ? weight : 1)) }
+        return positions.map { $0 / positions.last! }
+    }
+
+    /// Sample whose position is closest to `fraction` of the plot width.
+    func sampleIndex(nearestFraction fraction: CGFloat) -> Int? {
+        xFractions.indices.min { abs(xFractions[$0] - fraction) < abs(xFractions[$1] - fraction) }
+    }
+
     private func point(at index: Int, in series: [Sample]) -> NSPoint {
         let r = plotRect
-        let denom = max(1, series.count - 1)
-        let x = r.minX + r.width * CGFloat(index) / CGFloat(denom)
+        let x = r.minX + r.width * (xFractions.indices.contains(index) ? xFractions[index] : 0)
         let span = max(0.0001, highest - lowest)
         let frac = (series[index].value - lowest) / span
         return NSPoint(x: x, y: r.minY + r.height * CGFloat(frac))
@@ -167,6 +216,17 @@ final class PortfolioChartView: NSView {
         baseline.lineWidth = 0.75
         Theme.textGhost.withAlphaComponent(0.35).setStroke()
         baseline.stroke()
+
+        for fraction in sessionBoundaries {
+            let x = r.minX + r.width * fraction
+            let mark = NSBezierPath()
+            mark.move(to: NSPoint(x: x, y: r.minY))
+            mark.line(to: NSPoint(x: x, y: r.maxY))
+            mark.setLineDash([1, 2], count: 2, phase: 0)
+            mark.lineWidth = 0.75
+            Theme.textGhost.withAlphaComponent(0.4).setStroke()
+            mark.stroke()
+        }
 
         // Fill between the line and the baseline.
         let linePath = path(for: samples)
@@ -405,8 +465,7 @@ final class PortfolioChartView: NSView {
         let local = convert(event.locationInWindow, from: nil)
         let r = plotRect
         let frac = (local.x - r.minX) / max(1, r.width)
-        let idx = Int((frac * CGFloat(samples.count - 1)).rounded())
-        let clamped = max(0, min(samples.count - 1, idx))
+        guard let clamped = sampleIndex(nearestFraction: frac) else { return }
         if clamped != hoverIndex {
             hoverIndex = clamped
             needsDisplay = true
