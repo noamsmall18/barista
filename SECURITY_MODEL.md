@@ -9,7 +9,7 @@ Shared threat model for eight unrelated repositories owned by noamsmall18, each 
 | Component | Repo / code | Trust boundary |
 |---|---|---|
 | 3AM Cloud Runner | `3am-cloud`: `runner.mjs`, `agents.mjs`, `.github/workflows/reply.yml`, `memory/`, `.claude/skills/` | GitHub Actions job driven by Telegram messages via the `threeam-telegram` Worker bridge (`WORKER_URL`, `BRIDGE_KEY`); holds `CLAUDE_CODE_OAUTH_TOKEN`, `CODEX_AUTH_JSON`, `GH_REPOS_TOKEN` (push access to all repos) |
-| Substack Notes Autopilot | `substack-notes`: `src/`, `bin/`, `.github/workflows/`, `relay/worker.js`, `mac/` | Cloud `write` job (LLM agents, no credentials) → `publish` job (Substack/Telegram/git creds); Cloudflare Worker relay gated by `x-relay-key`; Mac LaunchAgent posting via Chrome extension |
+| Substack Notes Autopilot | `substack-notes`: `src/`, `bin/`, `.github/workflows/`, `relay/worker.js`, `mac/` | Cloud `write` job (LLM agents reading untrusted feeds; holds `CLAUDE_CODE_OAUTH_TOKEN` and Codex auth JSON on disk, but no Substack/Telegram/git creds) → `publish` job (Substack/Telegram/git creds); Cloudflare Worker relay gated by `x-relay-key`; Mac LaunchAgent posting via Chrome extension |
 | T3 Code Server | `t3code`: `apps/server`, `packages/*` (providers, source-control, ssh, tailscale, secret-provider-*) | Node WebSocket/HTTP server that spawns coding-agent CLIs with user credentials; pairing-token auth; reachable on LAN/Tailscale/tunnel |
 | T3 Code Clients | `t3code`: `apps/web`, `apps/desktop` (Electron), `apps/mobile` | Browser/Electron/RN clients; app.t3.codes connects to user-hosted servers |
 | T3 Connect Relay | `t3code`: `infra/relay`, `infra/task-cache` | Hosted tunnel/relay between clients and servers |
@@ -43,7 +43,7 @@ Shared threat model for eight unrelated repositories owned by noamsmall18, each 
 
 ## Existing controls (from code)
 
-- substack-notes: agent `write` job has no credentials; relay allowlists five Substack endpoints and constant-time key check.
+- substack-notes: agent `write` job has no Substack, Telegram or git credentials (it does hold the Claude and Codex model credentials); relay allowlists five Substack endpoints and constant-time key check.
 - next-gen-finance: rate limiting, published-post-only stats, Sanity webhook signature (only when `SANITY_WEBHOOK_SECRET` set), signed unsubscribe tokens, send-edition nonce in a private Sanity doc, SSRF host filter on source-icon.
 - gemach-finder: constant-time admin password compare, random session tokens, service key server-side only.
 - t3code: pairing tokens with scopes; server unauthenticated until paired.
