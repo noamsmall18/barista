@@ -10,6 +10,8 @@ categories, including Marketbar's terminal as one of them.
 Both ship from this repo and share a codebase. Native AppKit, **zero
 third-party dependencies**.
 
+**Website:** [noamsmall18.github.io/barista/marketbar](https://noamsmall18.github.io/barista/marketbar/)
+
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-black)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![No dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)
