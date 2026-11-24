@@ -29,6 +29,12 @@ first time it launches, and leaves Barista's copy untouched.
 
 ## Install
 
+**Quickest:** download `Marketbar-<version>.zip` from the
+[latest release](https://github.com/noamsmall18/barista/releases/latest),
+unzip it and drag `Marketbar.app` to Applications. It runs on Apple silicon and
+Intel Macs. The first launch needs one extra click; see
+[If you downloaded a release instead](#if-you-downloaded-a-release-instead).
+
 Neither app is distributed through the App Store or notarized, because
 notarization requires a paid Apple Developer account. **Building from source
 avoids the problem entirely** - macOS only quarantines files you *download*, so
@@ -147,7 +153,10 @@ swift build -c release          # binary only
 ./build-app.sh                  # compile only; creates no app copies
 ./build-app.sh marketbar        # just Marketbar
 ./build-app.sh barista --install
+scripts/package-release.sh      # universal release zip in dist/; installs nothing
 ```
+
+Release notes live in `docs/releases/`.
 
 No package dependencies, so there is nothing to resolve or vendor.
 

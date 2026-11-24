@@ -83,19 +83,7 @@ install_one() {
         }
     fi
     echo "==> Preparing $name update"
-    mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp "$BIN" "$app/Contents/MacOS/$exe"
-    cp "$plist" "$app/Contents/Info.plist"
-    cp -R "$ROOT/Barista/Web" "$app/Contents/Resources/Web"
-    "$ROOT/scripts/bundle-research.sh" "$BIN" "$app/Contents/Resources/Research.bundle" "$name" "$plist" "$ROOT/Barista"
-    if [ "$name" = "Marketbar" ]; then
-        cp "$ROOT/Branding/MarketbarIcon.icns" "$app/Contents/Resources/AppIcon.icns"
-    elif [ -f "$ROOT/AppIcon.icns" ]; then
-        cp "$ROOT/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
-    fi
-    codesign --force --deep --sign - --entitlements "$ROOT/Barista/Barista.entitlements" "$app" 2>/dev/null \
-        || codesign --force --deep --sign - "$app"
-    codesign --verify --deep --strict "$app"
+    "$ROOT/scripts/assemble-app.sh" "$BIN" "$name" "$plist" "$exe" "$app"
 
     # Tests never stop or launch a real app. Preserve the independent research
     # helper, which uses a different executable and does not own a menu-bar item.
